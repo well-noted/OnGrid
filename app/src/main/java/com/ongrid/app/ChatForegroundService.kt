@@ -151,11 +151,17 @@ class ChatForegroundService : Service() {
                     val serverEntry = toolMap[funcName]
 
                     val (resultText, isError) = try {
-                        if (serverEntry != null) {
-                            val r = app.mcpRepository.callTool(serverEntry.first, funcName, args)
-                            r.content.joinToString("\n") { it.text } to r.isError
-                        } else {
-                            "Tool '$funcName' not found in any connected MCP server." to true
+                        when {
+                            funcName == "web_search" -> {
+                                app.webSearchRepository.search(args) to false
+                            }
+                            serverEntry != null -> {
+                                val r = app.mcpRepository.callTool(serverEntry.first, funcName, args)
+                                r.content.joinToString("\n") { it.text } to r.isError
+                            }
+                            else -> {
+                                "Tool '$funcName' not found in any connected MCP server." to true
+                            }
                         }
                     } catch (e: Exception) {
                         "Tool '$funcName' failed: ${e.message ?: "unknown error"}" to true

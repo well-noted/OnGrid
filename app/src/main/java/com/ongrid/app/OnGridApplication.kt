@@ -10,10 +10,12 @@ import com.ongrid.app.data.model.OllamaChatRequest
 import com.ongrid.app.data.network.OllamaApi
 import com.ongrid.app.data.network.McpApi
 import com.ongrid.app.data.network.NetworkScanner
+import com.ongrid.app.data.network.WebSearchApi
 import com.ongrid.app.data.repository.ConversationRepository
 import com.ongrid.app.data.repository.McpRepository
 import com.ongrid.app.data.repository.OllamaRepository
 import com.ongrid.app.data.repository.ServerRepository
+import com.ongrid.app.data.repository.WebSearchRepository
 import kotlinx.coroutines.channels.Channel
 import okhttp3.OkHttpClient
 import java.util.concurrent.TimeUnit
@@ -81,8 +83,10 @@ class OnGridApplication : Application() {
     val ollamaApi: OllamaApi by lazy { OllamaApi(httpClient) }
     val mcpApi: McpApi by lazy { McpApi(httpClient) }
     val networkScanner: NetworkScanner by lazy { NetworkScanner(httpClient) }
+    val webSearchApi: WebSearchApi by lazy { WebSearchApi(httpClient) }
     val ollamaRepository: OllamaRepository by lazy { OllamaRepository(ollamaApi) }
     val mcpRepository: McpRepository by lazy { McpRepository(mcpApi, this) }
+    val webSearchRepository: WebSearchRepository by lazy { WebSearchRepository(webSearchApi) }
 
     val database: AppDatabase by lazy {
         Room.databaseBuilder(this, AppDatabase::class.java, "ongrid.db")

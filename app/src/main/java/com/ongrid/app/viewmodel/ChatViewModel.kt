@@ -97,12 +97,13 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    /** Load available MCP tools for the current session. */
+    /** Load available MCP tools plus built-in tools for the current session. */
     fun loadTools() {
         viewModelScope.launch {
             val toolMap = app.mcpRepository.getAllEnabledTools()
-            val tools = toolMap.values.map { (_, mcpTool) -> mcpTool.toOllamaTool() }
-            _uiState.value = _uiState.value.copy(availableTools = tools)
+            val mcpTools = toolMap.values.map { (_, mcpTool) -> mcpTool.toOllamaTool() }
+            val builtInTools = listOf(app.webSearchRepository.tool.toOllamaTool())
+            _uiState.value = _uiState.value.copy(availableTools = builtInTools + mcpTools)
         }
     }
 

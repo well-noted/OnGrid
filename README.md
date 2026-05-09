@@ -1,5 +1,9 @@
 # OnGrid
 
+<p align="center">
+  <img src="assets/onGridLogo.png" width="120" alt="OnGrid logo" />
+</p>
+
 An Android app that discovers [Ollama](https://ollama.com) servers on your local Wi-Fi network, lets you chat with any model they expose, and wires those models up to [Model Context Protocol (MCP)](https://modelcontextprotocol.io) tool servers so the AI can take real actions.
 
 ## Features
