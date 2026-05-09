@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">OnGrid</string>
+    <string name="scan_network">Scan Local Network</string>
+    <string name="scanning">Scanning…</string>
+    <string name="add_server">Add Server Manually</string>
+    <string name="no_servers_found">No Ollama servers found on the local network</string>
+    <string name="mcp_servers">MCP Tool Servers</string>
+    <string name="add_mcp_server">Add MCP Server</string>
+    <string name="chat_placeholder">Message…</string>
+    <string name="send">Send</string>
+    <string name="back">Back</string>
+    <string name="clear_chat">Clear Chat</string>
+</resources>
