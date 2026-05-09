@@ -1,5 +1,7 @@
 package com.ongrid.app.data.repository
 
+import com.ongrid.app.data.model.OllamaChatMessage
+import com.ongrid.app.data.model.OllamaChatRequest
 import com.ongrid.app.data.model.OllamaModel
 import com.ongrid.app.data.model.OllamaServer
 import com.ongrid.app.data.network.OllamaApi
@@ -26,4 +28,25 @@ class OllamaRepository(private val api: OllamaApi) {
         baseUrl: String,
         request: com.ongrid.app.data.model.OllamaChatRequest
     ) = api.streamChat(baseUrl, request)
+
+    /**
+     * Ask the model to produce a short conversation title (≤ 6 words) based on the first
+     * user message. Returns null if the request fails.
+     */
+    suspend fun generateTitle(baseUrl: String, modelName: String, firstUserMessage: String): String? {
+        val titleRequest = OllamaChatRequest(
+            model = modelName,
+            messages = listOf(
+                OllamaChatMessage(
+                    role = "user",
+                    content = "Summarize the following message as a short conversation title " +
+                            "(maximum 6 words, no quotes, no punctuation at the end):\n\n$firstUserMessage"
+                )
+            ),
+            stream = false
+        )
+        return api.chatOnce(baseUrl, titleRequest)?.trim()
+            ?.replace(Regex("^[\"']|[\"']$"), "")
+            ?.take(80)
+    }
 }

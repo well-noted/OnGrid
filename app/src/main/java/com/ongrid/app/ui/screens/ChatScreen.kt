@@ -28,6 +28,7 @@ import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Send
+import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -62,6 +63,9 @@ import kotlinx.coroutines.launch
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.withStyle
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -232,26 +236,28 @@ fun ChatScreen(
                     )
                     IconButton(
                         onClick = {
-                            if (inputText.isNotBlank() && !uiState.isLoading) {
+                            if (uiState.isLoading) {
+                                viewModel.stopGeneration()
+                            } else if (inputText.isNotBlank()) {
                                 viewModel.sendMessage(inputText.trim())
                                 inputText = ""
                             }
                         },
-                        enabled = inputText.isNotBlank() && !uiState.isLoading,
+                        enabled = uiState.isLoading || inputText.isNotBlank(),
                         modifier = Modifier
                             .size(48.dp)
                             .clip(CircleShape)
                             .background(
-                                if (inputText.isNotBlank() && !uiState.isLoading)
+                                if (uiState.isLoading || inputText.isNotBlank())
                                     MaterialTheme.colorScheme.primary
                                 else
                                     MaterialTheme.colorScheme.surfaceVariant
                             )
                     ) {
                         Icon(
-                            Icons.Default.Send,
-                            contentDescription = "Send",
-                            tint = if (inputText.isNotBlank() && !uiState.isLoading)
+                            if (uiState.isLoading) Icons.Default.Stop else Icons.Default.Send,
+                            contentDescription = if (uiState.isLoading) "Stop" else "Send",
+                            tint = if (uiState.isLoading || inputText.isNotBlank())
                                 Color.White
                             else
                                 MaterialTheme.colorScheme.onSurfaceVariant
@@ -326,11 +332,13 @@ fun ChatScreen(
     }
 }
 
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 private fun MessageBubble(message: ChatMessage) {
     val isUser = message.role == MessageRole.USER
     val isTool = message.role == MessageRole.TOOL
     var toolExpanded by remember { mutableStateOf(false) }
+    val clipboardManager = LocalClipboardManager.current
 
     val infiniteTransition = rememberInfiniteTransition(label = "cursor")
     val cursorAlpha by infiniteTransition.animateFloat(
@@ -350,8 +358,14 @@ private fun MessageBubble(message: ChatMessage) {
         if (isTool) {
             val isToolError = message.content.startsWith("Error") || message.content.contains("' failed:")
             Card(
-                onClick = { toolExpanded = !toolExpanded },
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .combinedClickable(
+                        onClick = { toolExpanded = !toolExpanded },
+                        onLongClick = {
+                            clipboardManager.setText(AnnotatedString(message.content))
+                        }
+                    ),
                 shape = RoundedCornerShape(
                     topStart = 16.dp,
                     topEnd = 16.dp,
@@ -389,7 +403,14 @@ private fun MessageBubble(message: ChatMessage) {
             }
         } else {
             Card(
-                modifier = Modifier.widthIn(max = 320.dp),
+                modifier = Modifier
+                    .widthIn(max = 320.dp)
+                    .combinedClickable(
+                        onClick = {},
+                        onLongClick = {
+                            clipboardManager.setText(AnnotatedString(message.content))
+                        }
+                    ),
                 shape = RoundedCornerShape(
                     topStart = 16.dp,
                     topEnd = 16.dp,

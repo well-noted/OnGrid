@@ -35,6 +35,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     private val app = application as OnGridApplication
     private val repo = app.conversationRepository
     private val serverRepo = app.serverRepository
+    private val ollamaRepo = app.ollamaRepository
 
     private val _messages = MutableStateFlow<List<ChatMessage>>(emptyList())
     val messages: StateFlow<List<ChatMessage>> = _messages.asStateFlow()
@@ -42,12 +43,17 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     private val _uiState = MutableStateFlow(ChatUiState())
     val uiState: StateFlow<ChatUiState> = _uiState.asStateFlow()
 
+    private var sendJob: kotlinx.coroutines.Job? = null
+
     var currentServer: OllamaServer? = null
     var currentModel: String = ""
 
     /** Non-null once a conversation has been created or loaded. */
     var currentConversationId: String? = null
         private set
+
+    /** True until the first assistant response has been fully persisted. */
+    private var titleGenerated: Boolean = false
 
     /**
      * All saved servers and their model lists — used by the in-chat model picker.
@@ -70,6 +76,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         currentServer = server
         currentModel = modelName
         currentConversationId = null
+        titleGenerated = false
         _messages.value = emptyList()
     }
 
@@ -77,6 +84,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     fun resumeConversation(conversationId: String) {
         viewModelScope.launch {
             currentConversationId = conversationId
+            titleGenerated = true  // existing conversations already have a title
             val entity = repo.getConversation(conversationId) ?: return@launch
             currentServer = OllamaServer(host = entity.serverHost, port = entity.serverPort)
             currentModel = entity.modelName
@@ -151,7 +159,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             Intent(getApplication(), ChatForegroundService::class.java)
         )
 
-        viewModelScope.launch {
+        sendJob = viewModelScope.launch {
             // Ensure a conversation entity exists; auto-title from the first user message.
             val convId = ensureConversation(server, userMsg)
             repo.saveMessage(convId, userMsg)
@@ -186,11 +194,43 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                         val finalMsg = _messages.value.find { it.id == event.msgId }
                         if (finalMsg != null) repo.saveMessage(convId, finalMsg)
                         repo.touchConversation(convId)
+
+                        // Generate a title from the first user message after the first turn.
+                        if (!titleGenerated) {
+                            titleGenerated = true
+                            val server = currentServer
+                            val firstUserContent = userMsg.content
+                            if (server != null) {
+                                val generated = ollamaRepo.generateTitle(
+                                    server.baseUrl, currentModel, firstUserContent
+                                )
+                                if (!generated.isNullOrBlank()) {
+                                    repo.updateTitle(convId, generated)
+                                }
+                            }
+                        }
                         break
                     }
                 }
             }
         }
+    }
+
+    /**
+     * Abort the current in-flight response. Stops the foreground service (which cancels
+     * its streaming coroutine) and cancels the ViewModel's channel-consumer job.
+     */
+    fun stopGeneration() {
+        getApplication<Application>().stopService(
+            Intent(getApplication(), ChatForegroundService::class.java)
+        )
+        sendJob?.cancel()
+        sendJob = null
+        // Finalize any streaming bubble that's still blinking
+        _messages.value = _messages.value.map { msg ->
+            if (msg.isStreaming) msg.copy(isStreaming = false) else msg
+        }
+        _uiState.value = _uiState.value.copy(isLoading = false)
     }
 
     /** Clear all messages for the current conversation (in memory and on disk). */

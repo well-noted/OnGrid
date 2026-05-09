@@ -10,6 +10,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -57,6 +58,29 @@ class OllamaApi(private val client: OkHttpClient) {
         Log.d(TAG, "listModels failed for $baseUrl: ${e.message}")
         null
     }
+
+    /**
+     * Send a non-streaming chat request and return the assistant's reply text, or null on error.
+     */
+    suspend fun chatOnce(baseUrl: String, request: OllamaChatRequest): String? =
+        withContext(Dispatchers.IO) {
+            try {
+                val nonStreamingRequest = request.copy(stream = false)
+                val jsonBody = gson.toJson(nonStreamingRequest).toRequestBody(JSON_MEDIA_TYPE)
+                val httpRequest = Request.Builder()
+                    .url("$baseUrl/api/chat")
+                    .post(jsonBody)
+                    .build()
+                client.newCall(httpRequest).execute().use { response ->
+                    if (!response.isSuccessful) return@withContext null
+                    val body = response.body?.string() ?: return@withContext null
+                    gson.fromJson(body, OllamaChatResponse::class.java)?.message?.content
+                }
+            } catch (e: IOException) {
+                Log.w(TAG, "chatOnce failed: ${e.message}")
+                null
+            }
+        }
 
     /** Stream a chat response from Ollama, emitting each partial response as it arrives. */
     fun streamChat(baseUrl: String, request: OllamaChatRequest): Flow<OllamaChatResponse> = flow {
