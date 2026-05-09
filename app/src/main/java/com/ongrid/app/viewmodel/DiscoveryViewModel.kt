@@ -4,10 +4,14 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.ongrid.app.OnGridApplication
+import com.ongrid.app.data.local.SavedServerEntity
 import com.ongrid.app.data.model.OllamaServer
+import com.ongrid.app.data.repository.toOllamaServer
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
 sealed class DiscoveryUiState {
@@ -24,19 +28,22 @@ class DiscoveryViewModel(application: Application) : AndroidViewModel(applicatio
     private val _uiState = MutableStateFlow<DiscoveryUiState>(DiscoveryUiState.Idle)
     val uiState: StateFlow<DiscoveryUiState> = _uiState.asStateFlow()
 
-    private val _servers = MutableStateFlow<List<OllamaServer>>(emptyList())
-    val servers: StateFlow<List<OllamaServer>> = _servers.asStateFlow()
+    /**
+     * Saved servers as the source of truth — the screen always shows whatever is in the DB.
+     * Newly discovered or manually-added servers are written directly to DB so this Flow
+     * updates automatically.
+     */
+    val servers: StateFlow<List<SavedServerEntity>> = app.serverRepository.savedServers
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
-    /** Scan the local network for Ollama servers. */
+    /** Scan the local network for Ollama servers and persist each one found. */
     fun startScan() {
         viewModelScope.launch {
             _uiState.value = DiscoveryUiState.Scanning
-            _servers.value = emptyList()
             try {
                 app.networkScanner.discoverServers(getApplication()).collect { server ->
-                    // Fetch model list for each found server
                     val detailed = app.ollamaRepository.fetchServerDetails(server) ?: server
-                    _servers.value = _servers.value + detailed
+                    app.serverRepository.saveServer(detailed)
                 }
                 _uiState.value = DiscoveryUiState.Done
             } catch (e: Exception) {
@@ -51,12 +58,17 @@ class DiscoveryViewModel(application: Application) : AndroidViewModel(applicatio
             val probe = app.networkScanner.probeOllamaServer(host, port)
             if (probe != null) {
                 val detailed = app.ollamaRepository.fetchServerDetails(probe) ?: probe
-                if (_servers.value.none { it.host == detailed.host && it.port == detailed.port }) {
-                    _servers.value = _servers.value + detailed
-                }
+                app.serverRepository.saveServer(detailed)
             } else {
                 _uiState.value = DiscoveryUiState.Error("Could not reach Ollama at $host:$port")
             }
         }
     }
+
+    fun removeServer(entity: SavedServerEntity) {
+        viewModelScope.launch {
+            app.serverRepository.removeServer(entity.host, entity.port)
+        }
+    }
 }
+

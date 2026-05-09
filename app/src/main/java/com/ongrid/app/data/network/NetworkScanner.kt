@@ -7,6 +7,7 @@ import com.ongrid.app.data.model.OllamaServer
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
@@ -34,16 +35,18 @@ class NetworkScanner(private val client: OkHttpClient) {
         Log.d(TAG, "Scanning subnet: $subnet.0/24")
 
         // Scan all 254 possible hosts in the /24 subnet concurrently
-        val deferreds = (1..254).map { hostByte ->
-            val host = "$subnet.$hostByte"
-            async(Dispatchers.IO) {
-                probeOllamaServer(host)
+        coroutineScope {
+            val deferreds = (1..254).map { hostByte ->
+                val host = "$subnet.$hostByte"
+                async(Dispatchers.IO) {
+                    probeOllamaServer(host)
+                }
             }
-        }
 
-        // Await results as they complete and emit discovered servers
-        deferreds.awaitAll().filterNotNull().forEach { server ->
-            emit(server)
+            // Await results as they complete and emit discovered servers
+            deferreds.awaitAll().filterNotNull().forEach { server ->
+                emit(server)
+            }
         }
     }.flowOn(Dispatchers.IO)
 

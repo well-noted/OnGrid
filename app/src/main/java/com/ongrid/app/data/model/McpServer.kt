@@ -4,6 +4,7 @@ data class McpServer(
     val id: String = java.util.UUID.randomUUID().toString(),
     val name: String,
     val baseUrl: String,
+    val authHeader: String? = null,
     val enabled: Boolean = true,
     val tools: List<McpTool> = emptyList(),
     val lastConnected: Long? = null

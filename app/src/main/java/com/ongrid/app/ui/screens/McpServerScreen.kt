@@ -81,8 +81,8 @@ fun McpServerScreen(
     if (showAddDialog) {
         AddMcpServerDialog(
             onDismiss = { showAddDialog = false },
-            onAdd = { name, url ->
-                viewModel.addServer(name, url)
+            onAdd = { name, url, authHeader ->
+                viewModel.addServer(name, url, authHeader)
                 showAddDialog = false
             }
         )
@@ -328,10 +328,11 @@ private fun McpServerCard(
 @Composable
 private fun AddMcpServerDialog(
     onDismiss: () -> Unit,
-    onAdd: (name: String, url: String) -> Unit
+    onAdd: (name: String, url: String, authHeader: String?) -> Unit
 ) {
     var name by remember { mutableStateOf("") }
     var url by remember { mutableStateOf("http://") }
+    var authHeader by remember { mutableStateOf("") }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -350,12 +351,21 @@ private fun AddMcpServerDialog(
                     value = url,
                     onValueChange = { url = it },
                     label = { Text("Server URL") },
-                    placeholder = { Text("http://192.168.1.50:3000") },
+                    placeholder = { Text("http://192.168.1.50:3000 or …/sse") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                OutlinedTextField(
+                    value = authHeader,
+                    onValueChange = { authHeader = it },
+                    label = { Text("Authorization (optional)") },
+                    placeholder = { Text("Basic … or Bearer …") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
                 Text(
-                    "The server must implement the MCP (Model Context Protocol) HTTP transport.",
+                    "Supports MCP HTTP Streamable (e.g. http://host:port) and SSE transport " +
+                            "(e.g. http://host:port/sse). URLs ending in /sse use SSE transport automatically.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -363,7 +373,7 @@ private fun AddMcpServerDialog(
         },
         confirmButton = {
             Button(
-                onClick = { if (name.isNotBlank() && url.length > 7) onAdd(name, url) },
+                onClick = { if (name.isNotBlank() && url.length > 7) onAdd(name, url, authHeader.takeIf { it.isNotBlank() }) },
                 enabled = name.isNotBlank() && url.length > 7
             ) {
                 Text("Connect")

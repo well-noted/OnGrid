@@ -29,12 +29,12 @@ class McpViewModel(application: Application) : AndroidViewModel(application) {
     val uiState: StateFlow<McpUiState> = _uiState.asStateFlow()
 
     /** Add a new MCP server and immediately attempt to connect and load its tools. */
-    fun addServer(name: String, url: String) {
+    fun addServer(name: String, url: String, authHeader: String?) {
         viewModelScope.launch {
             _uiState.value = McpUiState(isRefreshing = true)
             try {
                 val normalizedUrl = url.trimEnd('/')
-                val server = McpServer(name = name, baseUrl = normalizedUrl)
+                val server = McpServer(name = name, baseUrl = normalizedUrl, authHeader = authHeader.takeIf { !it.isNullOrBlank() })
                 val serverWithTools = app.mcpRepository.refreshTools(server)
                 app.mcpRepository.upsertServer(serverWithTools)
                 val toolCount = serverWithTools.tools.size

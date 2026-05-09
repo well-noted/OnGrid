@@ -8,6 +8,8 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
+import com.ongrid.app.data.model.McpCallToolResult
+import com.ongrid.app.data.model.McpContent
 import com.ongrid.app.data.model.McpServer
 import com.ongrid.app.data.model.McpTool
 import com.ongrid.app.data.network.McpApi
@@ -60,22 +62,22 @@ class McpRepository(
 
     /** Connect to the MCP server and refresh its tool list. */
     suspend fun refreshTools(server: McpServer): McpServer = withContext(Dispatchers.IO) {
-        val reachable = api.initialize(server.baseUrl)
-        if (!reachable) return@withContext server.copy(enabled = false)
-        val tools = api.listTools(server.baseUrl)
-        server.copy(tools = tools, lastConnected = System.currentTimeMillis())
+        val tools = api.listTools(server.baseUrl, server.authHeader)
+        server.copy(tools = tools, enabled = true, lastConnected = System.currentTimeMillis())
     }
 
-    /** Call a tool on a specific MCP server. */
+    /** Call a tool on a specific MCP server. Returns the full result including isError. */
     suspend fun callTool(
         serverId: String,
         toolName: String,
         arguments: Map<String, Any>
-    ): String = withContext(Dispatchers.IO) {
+    ): McpCallToolResult = withContext(Dispatchers.IO) {
         val server = getSavedServers().find { it.id == serverId }
-            ?: return@withContext "Error: MCP server not found"
-        val result = api.callTool(server.baseUrl, toolName, arguments)
-        result.content.joinToString("\n") { it.text }
+            ?: return@withContext McpCallToolResult(
+                content = listOf(McpContent(text = "Error: MCP server not found")),
+                isError = true
+            )
+        api.callTool(server.baseUrl, toolName, arguments, server.authHeader)
     }
 
     /** Return all tools from all enabled MCP servers, as toolName -> (serverId, McpTool). */

@@ -32,22 +32,36 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.rememberModalBottomSheetState
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.launch
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -59,6 +73,7 @@ import com.ongrid.app.data.model.ChatMessage
 import com.ongrid.app.data.model.MessageRole
 import com.ongrid.app.ui.theme.AssistantBubble
 import com.ongrid.app.ui.theme.ToolBubble
+import com.ongrid.app.ui.theme.ToolErrorBubble
 import com.ongrid.app.ui.theme.UserBubble
 import com.ongrid.app.viewmodel.ChatViewModel
 
@@ -71,8 +86,12 @@ fun ChatScreen(
 ) {
     val messages by viewModel.messages.collectAsState()
     val uiState by viewModel.uiState.collectAsState()
+    val savedServersWithModels by viewModel.savedServersWithModels.collectAsState()
     val listState = rememberLazyListState()
     var inputText by remember { mutableStateOf("") }
+    var showModelPicker by remember { mutableStateOf(false) }
+    val modelPickerSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val scope = rememberCoroutineScope()
 
     // Auto-scroll to bottom when new messages arrive
     LaunchedEffect(messages.size) {
@@ -86,10 +105,16 @@ fun ChatScreen(
             TopAppBar(
                 title = {
                     Column {
-                        Text(
-                            viewModel.currentModel.substringBefore(":"),
-                            style = MaterialTheme.typography.titleMedium
-                        )
+                        TextButton(
+                            onClick = { showModelPicker = true },
+                            contentPadding = PaddingValues(0.dp)
+                        ) {
+                            Text(
+                                viewModel.currentModel.substringBefore(":") + " ▾",
+                                style = MaterialTheme.typography.titleMedium,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                        }
                         viewModel.currentServer?.let { server ->
                             Text(
                                 server.displayName,
@@ -236,47 +261,159 @@ fun ChatScreen(
             }
         }
     }
+
+    // ── In-chat model picker ──────────────────────────────────────────────────
+    if (showModelPicker) {
+        ModalBottomSheet(
+            onDismissRequest = { showModelPicker = false },
+            sheetState = modelPickerSheetState
+        ) {
+            Text(
+                "Switch model",
+                style = MaterialTheme.typography.titleMedium,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+            )
+            HorizontalDivider()
+
+            if (savedServersWithModels.isEmpty()) {
+                Text(
+                    "No servers configured.",
+                    modifier = Modifier.padding(16.dp),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            } else {
+                savedServersWithModels.forEach { (serverDisplayName, models) ->
+                    val (host, port) = serverDisplayName.split(":").let {
+                        it[0] to (it.getOrNull(1)?.toIntOrNull() ?: 11434)
+                    }
+                    Text(
+                        serverDisplayName,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(start = 16.dp, top = 12.dp, end = 16.dp, bottom = 4.dp)
+                    )
+                    models.forEach { modelName ->
+                        Card(
+                            onClick = {
+                                viewModel.changeModel(host, port, modelName)
+                                scope.launch { modelPickerSheetState.hide() }
+                                    .invokeOnCompletion { showModelPicker = false }
+                            },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 8.dp, vertical = 2.dp),
+                            colors = CardDefaults.cardColors(
+                                containerColor = if (modelName == viewModel.currentModel &&
+                                    host == viewModel.currentServer?.host)
+                                    MaterialTheme.colorScheme.primaryContainer
+                                else
+                                    MaterialTheme.colorScheme.surfaceVariant
+                            )
+                        ) {
+                            Text(
+                                modelName,
+                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+                        }
+                    }
+                    HorizontalDivider(modifier = Modifier.padding(top = 8.dp))
+                }
+            }
+            Spacer(Modifier.height(16.dp))
+        }
+    }
 }
 
 @Composable
 private fun MessageBubble(message: ChatMessage) {
     val isUser = message.role == MessageRole.USER
     val isTool = message.role == MessageRole.TOOL
+    var toolExpanded by remember { mutableStateOf(false) }
+
+    val infiniteTransition = rememberInfiniteTransition(label = "cursor")
+    val cursorAlpha by infiniteTransition.animateFloat(
+        initialValue = 1f,
+        targetValue = 0f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 600),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "cursorAlpha"
+    )
 
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start
     ) {
-        Card(
-            modifier = Modifier.widthIn(max = 320.dp),
-            shape = RoundedCornerShape(
-                topStart = 16.dp,
-                topEnd = 16.dp,
-                bottomStart = if (isUser) 16.dp else 4.dp,
-                bottomEnd = if (isUser) 4.dp else 16.dp
-            ),
-            colors = CardDefaults.cardColors(
-                containerColor = when {
-                    isUser -> UserBubble
-                    isTool -> ToolBubble
-                    else -> AssistantBubble
+        if (isTool) {
+            val isToolError = message.content.startsWith("Error") || message.content.contains("' failed:")
+            Card(
+                onClick = { toolExpanded = !toolExpanded },
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(
+                    topStart = 16.dp,
+                    topEnd = 16.dp,
+                    bottomStart = 4.dp,
+                    bottomEnd = 16.dp
+                ),
+                colors = CardDefaults.cardColors(containerColor = if (isToolError) ToolErrorBubble else ToolBubble)
+            ) {
+                Column(modifier = Modifier.padding(12.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            "🔧 ${message.toolCallId ?: "Tool Result"}",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = Color.White.copy(alpha = 0.7f)
+                        )
+                        Text(
+                            if (toolExpanded) "▲" else "▼",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = Color.White.copy(alpha = 0.7f)
+                        )
+                    }
+                    if (toolExpanded) {
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            text = message.content,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = Color.White
+                        )
+                    }
                 }
-            )
-        ) {
-            Column(modifier = Modifier.padding(12.dp)) {
-                if (isTool) {
-                    Text(
-                        "🔧 Tool Result",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = Color.White.copy(alpha = 0.7f)
-                    )
-                    Spacer(Modifier.height(4.dp))
-                }
-                Text(
-                    text = message.content + if (message.isStreaming) "▌" else "",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = Color.White
+            }
+        } else {
+            Card(
+                modifier = Modifier.widthIn(max = 320.dp),
+                shape = RoundedCornerShape(
+                    topStart = 16.dp,
+                    topEnd = 16.dp,
+                    bottomStart = if (isUser) 16.dp else 4.dp,
+                    bottomEnd = if (isUser) 4.dp else 16.dp
+                ),
+                colors = CardDefaults.cardColors(
+                    containerColor = if (isUser) UserBubble else AssistantBubble
                 )
+            ) {
+                Column(modifier = Modifier.padding(12.dp)) {
+                    Text(
+                        text = buildAnnotatedString {
+                            append(message.content)
+                            if (message.isStreaming) {
+                                withStyle(SpanStyle(color = Color.White.copy(alpha = cursorAlpha))) {
+                                    append("▌")
+                                }
+                            }
+                        },
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = Color.White
+                    )
+                }
             }
         }
     }

@@ -6,18 +6,27 @@ import com.ongrid.app.data.model.OllamaChatRequest
 import com.ongrid.app.data.model.OllamaChatResponse
 import com.ongrid.app.data.model.OllamaTagsResponse
 import com.ongrid.app.data.model.OllamaVersionResponse
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.flowOn
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import java.io.IOException
+import java.util.concurrent.TimeUnit
 
 private const val TAG = "OllamaApi"
 private val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
 
 class OllamaApi(private val client: OkHttpClient) {
+
+    // Streaming responses can take arbitrarily long between tokens; disable the read timeout
+    // so OkHttp doesn't drop the connection while the model is generating.
+    private val streamingClient: OkHttpClient by lazy {
+        client.newBuilder().readTimeout(0, TimeUnit.MILLISECONDS).build()
+    }
 
     private val gson = Gson()
 
@@ -57,7 +66,7 @@ class OllamaApi(private val client: OkHttpClient) {
             .post(jsonBody)
             .build()
 
-        client.newCall(httpRequest).execute().use { response ->
+        streamingClient.newCall(httpRequest).execute().use { response ->
             if (!response.isSuccessful) {
                 throw IOException("HTTP ${response.code}: ${response.message}")
             }
@@ -74,5 +83,5 @@ class OllamaApi(private val client: OkHttpClient) {
                 }
             }
         }
-    }
+    }.flowOn(Dispatchers.IO)
 }
