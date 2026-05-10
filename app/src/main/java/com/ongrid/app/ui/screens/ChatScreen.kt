@@ -356,7 +356,7 @@ private fun MessageBubble(message: ChatMessage) {
         horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start
     ) {
         if (isTool) {
-            val isToolError = message.content.startsWith("Error") || message.content.contains("' failed:")
+            val isToolError = message.content.startsWith("Error") || message.content.contains("' failed:") || message.content.contains("' not found")
             Card(
                 modifier = Modifier
                     .fillMaxWidth()

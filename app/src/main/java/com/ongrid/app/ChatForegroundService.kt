@@ -163,7 +163,13 @@ class ChatForegroundService : Service() {
                                 r.content.joinToString("\n") { it.text } to r.isError
                             }
                             else -> {
-                                "Tool '$funcName' not found in any connected MCP server." to true
+                                val availableNames = buildList {
+                                    add("web_search")
+                                    addAll(toolMap.keys)
+                                }
+                                val availableList = if (availableNames.isEmpty()) "none"
+                                    else availableNames.joinToString(", ")
+                                "Tool '$funcName' not found. Available tools: $availableList" to true
                             }
                         }
                     } catch (e: Exception) {
