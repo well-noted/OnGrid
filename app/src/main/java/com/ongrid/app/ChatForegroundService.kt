@@ -136,10 +136,13 @@ class ChatForegroundService : Service() {
 
                 // Extend the conversation history with the assistant message that
                 // contained the tool calls, then add each tool result.
+                // Use null (not "") for content when no text preceded the tool calls — Gemma
+                // and other models treat an explicit empty-string content differently from an
+                // absent content field and can ignore tool results when it is present.
                 val nextMessages = currentRequest.messages.toMutableList()
                 nextMessages += OllamaChatMessage(
                     role = "assistant",
-                    content = accumulated.toString(),
+                    content = accumulated.toString().ifEmpty { null },
                     tool_calls = toolCalls
                 )
 
