@@ -206,29 +206,33 @@ fun ChatScreen(
             // Streaming thinking indicator — shown while the model is reasoning
             if (uiState.streamingThinkingContent.isNotEmpty()) {
                 var thinkingExpanded by remember { mutableStateOf(false) }
+                val thinkingScrollState = rememberScrollState()
+
+                // Auto-scroll to the bottom as new tokens arrive
+                LaunchedEffect(uiState.streamingThinkingContent) {
+                    if (thinkingExpanded) thinkingScrollState.animateScrollTo(thinkingScrollState.maxValue)
+                }
+
                 Surface(
                     modifier = Modifier.fillMaxWidth(),
                     onClick = { thinkingExpanded = !thinkingExpanded },
                     color = MaterialTheme.colorScheme.tertiaryContainer
                 ) {
                     Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                "🧠 Thinking…  ${if (thinkingExpanded) "▲" else "▼"}",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onTertiaryContainer
-                            )
-                        }
+                        Text(
+                            "🧠 Thinking…  ${if (thinkingExpanded) "▲" else "▼"}",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onTertiaryContainer
+                        )
                         if (thinkingExpanded) {
                             Spacer(Modifier.height(4.dp))
                             Text(
                                 uiState.streamingThinkingContent,
                                 style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onTertiaryContainer
+                                color = MaterialTheme.colorScheme.onTertiaryContainer,
+                                modifier = Modifier
+                                    .heightIn(max = 200.dp)
+                                    .verticalScroll(thinkingScrollState)
                             )
                         }
                     }
