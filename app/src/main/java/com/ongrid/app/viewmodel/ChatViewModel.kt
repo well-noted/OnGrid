@@ -279,6 +279,12 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                         }
                     }
 
+                    is ChatServiceEvent.SetPlanSteps -> {
+                        _messages.value = _messages.value.map { msg ->
+                            if (msg.id == event.msgId) msg.copy(planSteps = event.steps) else msg
+                        }
+                    }
+
                     is ChatServiceEvent.FinalizeMessage ->
                         if (event.content.isBlank() && event.toolCalls.isEmpty()) {
                             _messages.value = _messages.value.filter { it.id != event.msgId }

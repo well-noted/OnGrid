@@ -14,7 +14,10 @@ import com.ongrid.app.data.model.McpInputSchema
 import com.ongrid.app.data.model.MessageRole
 import com.ongrid.app.data.model.OllamaChatMessage
 import com.ongrid.app.data.model.OllamaChatRequest
+import com.ongrid.app.data.model.OllamaTool
 import com.ongrid.app.data.model.OllamaToolCall
+import com.ongrid.app.data.model.OllamaToolFunction
+import com.ongrid.app.data.model.PlanStep
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -87,6 +90,9 @@ class ChatForegroundService : Service() {
         var currentRequest = pending.request
         // True until the first tool-calling round is detected; planning only fires once.
         var planningPending = pending.guidedPlanningEnabled
+        // Holds the plan bubble ID and live step list so the tool loop can update them.
+        var planMsgId: String? = null
+        var currentPlanSteps: MutableList<PlanStep> = mutableListOf()
 
         try {
             while (true) {
@@ -160,11 +166,12 @@ class ChatForegroundService : Service() {
                 // run again on subsequent tool-call rounds within the same turn.
                 if (planningPending) {
                     planningPending = false
-                    val planMsgId = UUID.randomUUID().toString()
+                    val newPlanMsgId = UUID.randomUUID().toString()
+                    planMsgId = newPlanMsgId
                     app.chatServiceChannel.send(
                         ChatServiceEvent.AppendMessage(
                             ChatMessage(
-                                id = planMsgId,
+                                id = newPlanMsgId,
                                 role = MessageRole.ASSISTANT,
                                 content = "",
                                 isStreaming = true,
@@ -185,7 +192,8 @@ class ChatForegroundService : Service() {
                             OllamaChatMessage(
                                 role = "user",
                                 content = "Before executing the tool calls above, briefly outline " +
-                                    "your step-by-step plan for completing this task."
+                                    "your step-by-step plan for completing this task as a " +
+                                    "numbered list (e.g. \"1. Do X\n2. Do Y\")."
                             )
                     )
                     val planAccumulated = StringBuilder()
@@ -196,7 +204,7 @@ class ChatForegroundService : Service() {
                                 if (delta.isNotEmpty()) {
                                     planAccumulated.append(delta)
                                     app.chatServiceChannel.send(
-                                        ChatServiceEvent.Token(planMsgId, planAccumulated.toString())
+                                        ChatServiceEvent.Token(newPlanMsgId, planAccumulated.toString())
                                     )
                                 }
                             }
@@ -204,8 +212,27 @@ class ChatForegroundService : Service() {
                         // Planning is best-effort — a failure here should not abort execution.
                     }
                     app.chatServiceChannel.send(
-                        ChatServiceEvent.FinalizeMessage(planMsgId, planAccumulated.toString())
+                        ChatServiceEvent.FinalizeMessage(newPlanMsgId, planAccumulated.toString())
                     )
+                    // Parse the numbered list into discrete steps and push them to the UI.
+                    val parsedSteps = parsePlanSteps(planAccumulated.toString())
+                    if (parsedSteps.isNotEmpty()) {
+                        currentPlanSteps = parsedSteps.toMutableList()
+                        app.chatServiceChannel.send(
+                            ChatServiceEvent.SetPlanSteps(newPlanMsgId, currentPlanSteps.toList())
+                        )
+                    }
+                    // Inject the plan into the live request history so the model can
+                    // reference it during every subsequent tool-call round this turn.
+                    if (planAccumulated.isNotEmpty()) {
+                        currentRequest = currentRequest.copy(
+                            messages = currentRequest.messages +
+                                OllamaChatMessage(role = "assistant", content = planAccumulated.toString()),
+                            // Add mark_steps_complete to the tool list so the model can
+                            // check off steps as it works through them.
+                            tools = currentRequest.tools.orEmpty() + MARK_STEPS_COMPLETE_TOOL
+                        )
+                    }
                 }
 
                 // Extend the conversation history with the assistant message that
@@ -229,6 +256,7 @@ class ChatForegroundService : Service() {
 
                     val (resultText, isError) = try {
                         val schema: McpInputSchema? = when {
+                            funcName == "mark_steps_complete" -> null
                             funcName == "web_search" -> app.webSearchRepository.tool.inputSchema
                             serverEntry != null -> serverEntry.second.inputSchema
                             else -> null
@@ -237,6 +265,25 @@ class ChatForegroundService : Service() {
                         if (validationError != null) {
                             validationError to true
                         } else when {
+                            funcName == "mark_steps_complete" -> {
+                                // Intercept plan step completions — update the UI, no MCP call.
+                                @Suppress("UNCHECKED_CAST")
+                                val indices = (args["step_numbers"] as? List<*>)
+                                    ?.mapNotNull { (it as? Number)?.toInt() }
+                                    ?: emptyList()
+                                val activePlanMsgId = planMsgId
+                                if (activePlanMsgId != null && indices.isNotEmpty()) {
+                                    val updated = currentPlanSteps.map { step ->
+                                        if (step.index in indices) step.copy(isDone = true) else step
+                                    }
+                                    currentPlanSteps = updated.toMutableList()
+                                    app.chatServiceChannel.send(
+                                        ChatServiceEvent.SetPlanSteps(activePlanMsgId, currentPlanSteps.toList())
+                                    )
+                                }
+                                val label = indices.joinToString(", ") { "step $it" }
+                                "Marked $label as complete." to false
+                            }
                             funcName == "web_search" -> {
                                 app.webSearchRepository.search(args) to false
                             }
@@ -259,6 +306,13 @@ class ChatForegroundService : Service() {
                     }
 
                     if (isError) anyToolFailed = true
+
+                    // mark_steps_complete is silent — don't pollute the conversation with a
+                    // tool-result bubble for a housekeeping call.
+                    if (funcName == "mark_steps_complete") {
+                        nextMessages += OllamaChatMessage(role = "tool", content = resultText)
+                        continue
+                    }
 
                     // Tell the ViewModel to append the tool-result bubble to the conversation
                     val toolResultMsg = ChatMessage(
@@ -404,5 +458,37 @@ class ChatForegroundService : Service() {
         private const val NOTIFICATION_ID = 1001
         private const val COMPLETE_CHANNEL_ID = "chat_complete"
         private const val COMPLETE_NOTIFICATION_ID = 1002
+
+        /** Regex that matches a numbered-list line: "1. text", "2) text", etc. */
+        private val STEP_REGEX = Regex("""^\s*\d+[.)]\s+(.+)$""", RegexOption.MULTILINE)
+
+        /** Parses a free-text plan response into discrete [PlanStep]s. */
+        fun parsePlanSteps(text: String): List<PlanStep> =
+            STEP_REGEX.findAll(text)
+                .mapIndexed { i, m -> PlanStep(index = i + 1, text = m.groupValues[1].trim()) }
+                .toList()
+
+        /**
+         * A built-in tool given to the model after planning so it can mark individual
+         * plan steps as complete as it works through them.
+         */
+        val MARK_STEPS_COMPLETE_TOOL = OllamaTool(
+            function = OllamaToolFunction(
+                name = "mark_steps_complete",
+                description = "Mark one or more steps from your plan as complete. " +
+                    "Call this after each step succeeds so the user can see your progress.",
+                parameters = mapOf(
+                    "type" to "object",
+                    "properties" to mapOf(
+                        "step_numbers" to mapOf(
+                            "type" to "array",
+                            "description" to "1-based step numbers to mark as complete",
+                            "items" to mapOf("type" to "integer")
+                        )
+                    ),
+                    "required" to listOf("step_numbers")
+                )
+            )
+        )
     }
 }

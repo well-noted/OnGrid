@@ -8,6 +8,7 @@ import com.ongrid.app.data.local.AppDatabase
 import com.ongrid.app.data.model.ChatMessage
 import com.ongrid.app.data.model.OllamaChatRequest
 import com.ongrid.app.data.model.OllamaToolCall
+import com.ongrid.app.data.model.PlanStep
 import com.ongrid.app.data.network.OllamaApi
 import com.ongrid.app.data.network.McpApi
 import com.ongrid.app.data.network.NetworkScanner
@@ -55,6 +56,8 @@ sealed class ChatServiceEvent {
     ) : ChatServiceEvent()
     /** Marks an in-flight assistant message as a guided-planning output. */
     data class SetPlan(val msgId: String) : ChatServiceEvent()
+    /** Updates the parsed plan steps (and their completion state) for a plan bubble. */
+    data class SetPlanSteps(val msgId: String, val steps: List<PlanStep>) : ChatServiceEvent()
     /** The entire conversational turn is finished (or failed). */
     data class TurnComplete(
         val msgId: String,

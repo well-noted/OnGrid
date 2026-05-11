@@ -2,6 +2,13 @@ package com.ongrid.app.data.model
 
 enum class MessageRole { USER, ASSISTANT, SYSTEM, TOOL }
 
+/** A single step in a guided plan, with its completion status. */
+data class PlanStep(
+    val index: Int,
+    val text: String,
+    val isDone: Boolean = false
+)
+
 data class ChatMessage(
     val id: String = java.util.UUID.randomUUID().toString(),
     val role: MessageRole,
@@ -14,6 +21,8 @@ data class ChatMessage(
     val isError: Boolean = false,
     /** When true this message is the guided-planning output, rendered with a distinct plan style. */
     val isPlan: Boolean = false,
+    /** Parsed plan steps when isPlan = true; empty until the plan text is finalised. */
+    val planSteps: List<PlanStep> = emptyList(),
     /** Reasoning/thinking content produced by the model before its final answer. */
     val thinkingContent: String? = null,
     val timestamp: Long = System.currentTimeMillis()

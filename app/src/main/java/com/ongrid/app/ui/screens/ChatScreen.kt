@@ -29,10 +29,13 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Build
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Psychology
+import androidx.compose.material.icons.filled.RadioButtonUnchecked
 import androidx.compose.material.icons.filled.Send
 import androidx.compose.material.icons.filled.Stop
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -657,18 +660,46 @@ private fun MessageBubble(message: ChatMessage) {
                     }
                     if (planExpanded) {
                         Spacer(Modifier.height(6.dp))
-                        Text(
-                            text = buildAnnotatedString {
-                                append(message.content)
-                                if (message.isStreaming) {
-                                    withStyle(SpanStyle(color = Color.White.copy(alpha = cursorAlpha))) {
-                                        append("▌")
-                                    }
+                        if (message.planSteps.isNotEmpty()) {
+                            message.planSteps.forEach { step ->
+                                Row(
+                                    modifier = Modifier.padding(vertical = 3.dp),
+                                    verticalAlignment = Alignment.Top
+                                ) {
+                                    Icon(
+                                        imageVector = if (step.isDone) Icons.Default.CheckCircle
+                                                      else Icons.Default.RadioButtonUnchecked,
+                                        contentDescription = if (step.isDone) "Done" else "Pending",
+                                        tint = if (step.isDone) Color(0xFF81C784)
+                                               else Color.White.copy(alpha = 0.5f),
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                    Spacer(Modifier.width(8.dp))
+                                    Text(
+                                        text = "${step.index}. ${step.text}",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = if (step.isDone) Color.White.copy(alpha = 0.45f)
+                                                else Color.White,
+                                        textDecoration = if (step.isDone) TextDecoration.LineThrough
+                                                         else TextDecoration.None
+                                    )
                                 }
-                            },
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = Color.White
-                        )
+                            }
+                        } else {
+                            // Steps not yet parsed (still streaming) — show raw text with cursor.
+                            Text(
+                                text = buildAnnotatedString {
+                                    append(message.content)
+                                    if (message.isStreaming) {
+                                        withStyle(SpanStyle(color = Color.White.copy(alpha = cursorAlpha))) {
+                                            append("▌")
+                                        }
+                                    }
+                                },
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = Color.White
+                            )
+                        }
                     }
                 }
             }
