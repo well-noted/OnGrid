@@ -460,7 +460,8 @@ fun ChatScreen(
         }
     }
 
-    // ── In-chat model picker ──────────────────────────────────────────────────    if (showModelPicker) {
+    // ── In-chat model picker ──────────────────────────────────────────────────
+    if (showModelPicker) {
         ModalBottomSheet(
             onDismissRequest = { showModelPicker = false },
             sheetState = modelPickerSheetState
