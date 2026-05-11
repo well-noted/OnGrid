@@ -24,6 +24,15 @@ class OllamaRepository(private val api: OllamaApi) {
             api.listModels(baseUrl)?.models ?: emptyList()
         }
 
+    /**
+     * Returns true if the given model advertises the "thinking" capability via /api/show.
+     * Falls back to false on any error so the UI simply hides the thinking button.
+     */
+    suspend fun checkThinkingSupport(baseUrl: String, modelName: String): Boolean =
+        withContext(Dispatchers.IO) {
+            api.showModel(baseUrl, modelName)?.capabilities?.contains("thinking") == true
+        }
+
     fun streamChat(
         baseUrl: String,
         request: com.ongrid.app.data.model.OllamaChatRequest

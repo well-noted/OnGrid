@@ -12,6 +12,7 @@ import com.ongrid.app.data.model.ChatMessage
 import com.ongrid.app.data.model.MessageRole
 import com.ongrid.app.data.model.OllamaChatMessage
 import com.ongrid.app.data.model.OllamaChatRequest
+import com.ongrid.app.data.model.OllamaRequestOptions
 import com.ongrid.app.data.model.OllamaServer
 import com.ongrid.app.data.model.OllamaTool
 import com.google.gson.Gson
@@ -28,7 +29,15 @@ data class ChatUiState(
     val isLoading: Boolean = false,
     val error: String? = null,
     val availableTools: List<OllamaTool> = emptyList(),
-    val disabledToolNames: Set<String> = emptySet()
+    val disabledToolNames: Set<String> = emptySet(),
+    /** True when /api/show reports that the current model has the "thinking" capability. */
+    val supportsThinking: Boolean = false,
+    /** Whether extended reasoning is currently enabled for outgoing requests. */
+    val thinkingEnabled: Boolean = false,
+    /** Token budget for thinking (0 = let the model decide). */
+    val thinkingBudget: Int = 8192,
+    /** Live thinking text accumulating while the model reasons during the current turn. */
+    val streamingThinkingContent: String = ""
 )
 
 class ChatViewModel(application: Application) : AndroidViewModel(application) {
@@ -79,7 +88,13 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         currentConversationId = null
         titleGenerated = false
         _messages.value = emptyList()
-        _uiState.value = _uiState.value.copy(disabledToolNames = emptySet())
+        _uiState.value = _uiState.value.copy(
+            disabledToolNames = emptySet(),
+            supportsThinking = false,
+            thinkingEnabled = false,
+            streamingThinkingContent = ""
+        )
+        checkThinkingSupport(server.baseUrl, modelName)
     }
 
     /** Called when the user reopens an existing conversation from the list. */
@@ -92,6 +107,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             currentModel = entity.modelName
             _messages.value = repo.getMessages(conversationId)
             loadTools()
+            checkThinkingSupport(currentServer!!.baseUrl, currentModel)
         }
     }
 
@@ -102,8 +118,38 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     fun changeModel(serverHost: String, serverPort: Int, modelName: String) {
         currentServer = OllamaServer(host = serverHost, port = serverPort)
         currentModel = modelName
+        _uiState.value = _uiState.value.copy(
+            supportsThinking = false,
+            thinkingEnabled = false,
+            streamingThinkingContent = ""
+        )
         viewModelScope.launch {
             serverRepo.saveLastUsed(serverHost, serverPort, modelName)
+            checkThinkingSupport("http://$serverHost:$serverPort", modelName)
+        }
+    }
+
+    // ── Thinking controls ─────────────────────────────────────────────────────
+
+    /** Toggle extended reasoning on/off. Only relevant when [ChatUiState.supportsThinking] is true. */
+    fun toggleThinking() {
+        _uiState.value = _uiState.value.copy(thinkingEnabled = !_uiState.value.thinkingEnabled)
+    }
+
+    /** Set the token budget for extended reasoning (0 = let the model decide). */
+    fun setThinkingBudget(tokens: Int) {
+        _uiState.value = _uiState.value.copy(thinkingBudget = tokens.coerceIn(0, 32768))
+    }
+
+    /** Query /api/show and update [ChatUiState.supportsThinking] accordingly. */
+    private fun checkThinkingSupport(baseUrl: String, modelName: String) {
+        viewModelScope.launch {
+            val supports = ollamaRepo.checkThinkingSupport(baseUrl, modelName)
+            _uiState.value = _uiState.value.copy(
+                supportsThinking = supports,
+                // Disable thinking if the new model doesn't support it
+                thinkingEnabled = if (supports) _uiState.value.thinkingEnabled else false
+            )
         }
     }
 
@@ -154,11 +200,17 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         val tools = _uiState.value.availableTools
             .filter { it.function.name !in disabled }
             .takeIf { it.isNotEmpty() }
+        val thinkingEnabled = _uiState.value.thinkingEnabled && _uiState.value.supportsThinking
+        val thinkingBudget = _uiState.value.thinkingBudget
         val request = OllamaChatRequest(
             model = currentModel,
             messages = history,
             stream = true,
-            tools = tools
+            tools = tools,
+            think = if (_uiState.value.supportsThinking) thinkingEnabled else null,
+            options = if (thinkingEnabled && thinkingBudget > 0)
+                OllamaRequestOptions(thinkingBudget = thinkingBudget)
+            else null
         )
 
         // Drain any leftover events from a previous (completed or cancelled) request.
@@ -182,6 +234,11 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     is ChatServiceEvent.Token ->
                         updateStreamingMessage(event.msgId, event.content)
 
+                    is ChatServiceEvent.ThinkingToken ->
+                        _uiState.value = _uiState.value.copy(
+                            streamingThinkingContent = event.thinking
+                        )
+
                     is ChatServiceEvent.FinalizeMessage ->
                         if (event.content.isBlank()) {
                             _messages.value = _messages.value.filter { it.id != event.msgId }
@@ -195,13 +252,17 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     }
 
                     is ChatServiceEvent.TurnComplete -> {
+                        val thinkingContent = event.thinkingContent
                         if (event.error != null) {
                             finalizeMessage(event.msgId, "Error: ${event.error}")
                             _uiState.value = _uiState.value.copy(error = event.error)
                         } else {
-                            finalizeMessage(event.msgId, event.lastContent)
+                            finalizeMessageWithThinking(event.msgId, event.lastContent, thinkingContent)
                         }
-                        _uiState.value = _uiState.value.copy(isLoading = false)
+                        _uiState.value = _uiState.value.copy(
+                            isLoading = false,
+                            streamingThinkingContent = ""
+                        )
 
                         // Persist the finalized assistant message.
                         val finalMsg = _messages.value.find { it.id == event.msgId }
@@ -243,7 +304,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         _messages.value = _messages.value.map { msg ->
             if (msg.isStreaming) msg.copy(isStreaming = false) else msg
         }
-        _uiState.value = _uiState.value.copy(isLoading = false)
+        _uiState.value = _uiState.value.copy(isLoading = false, streamingThinkingContent = "")
     }
 
     /** Clear all messages for the current conversation (in memory and on disk). */
@@ -291,6 +352,16 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     private fun finalizeMessage(id: String, content: String) {
         _messages.value = _messages.value.map { msg ->
             if (msg.id == id) msg.copy(content = content, isStreaming = false) else msg
+        }
+    }
+
+    private fun finalizeMessageWithThinking(id: String, content: String, thinking: String?) {
+        _messages.value = _messages.value.map { msg ->
+            if (msg.id == id) msg.copy(
+                content = content,
+                isStreaming = false,
+                thinkingContent = thinking
+            ) else msg
         }
     }
 }

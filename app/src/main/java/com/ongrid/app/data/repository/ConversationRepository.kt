@@ -76,6 +76,7 @@ class ConversationRepository(private val db: AppDatabase) {
                 conversationId = conversationId,
                 role = message.role.name,
                 content = message.content,
+                thinkingContent = message.thinkingContent ?: "",
                 timestamp = message.timestamp
             )
         )
@@ -90,5 +91,6 @@ private fun MessageEntity.toChatMessage() = ChatMessage(
     id = id,
     role = MessageRole.valueOf(role),
     content = content,
+    thinkingContent = thinkingContent.ifEmpty { null },
     timestamp = timestamp
 )

@@ -30,6 +30,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.filled.Send
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.Card
@@ -49,6 +50,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.Switch
+import androidx.compose.material3.Slider
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -64,6 +66,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import kotlinx.coroutines.launch
+import kotlin.math.roundToInt
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.withStyle
@@ -74,6 +77,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContentColor
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.unit.dp
@@ -101,6 +105,8 @@ fun ChatScreen(
     val modelPickerSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var showToolSheet by remember { mutableStateOf(false) }
     val toolSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    var showThinkingSheet by remember { mutableStateOf(false) }
+    val thinkingSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val scope = rememberCoroutineScope()
 
     // Auto-scroll to bottom when new messages arrive
@@ -149,6 +155,18 @@ fun ChatScreen(
                         )
                         Spacer(Modifier.width(4.dp))
                     }
+                    if (uiState.supportsThinking) {
+                        IconButton(onClick = { showThinkingSheet = true }) {
+                            Icon(
+                                Icons.Default.Psychology,
+                                contentDescription = "Thinking settings",
+                                tint = if (uiState.thinkingEnabled)
+                                    MaterialTheme.colorScheme.primary
+                                else
+                                    LocalContentColor.current
+                            )
+                        }
+                    }
                     IconButton(onClick = onOpenMcpServers) {
                         Icon(Icons.Default.Build, contentDescription = "MCP Tools")
                     }
@@ -182,6 +200,38 @@ fun ChatScreen(
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
+                }
+            }
+
+            // Streaming thinking indicator — shown while the model is reasoning
+            if (uiState.streamingThinkingContent.isNotEmpty()) {
+                var thinkingExpanded by remember { mutableStateOf(false) }
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    onClick = { thinkingExpanded = !thinkingExpanded },
+                    color = MaterialTheme.colorScheme.tertiaryContainer
+                ) {
+                    Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                "🧠 Thinking…  ${if (thinkingExpanded) "▲" else "▼"}",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onTertiaryContainer
+                            )
+                        }
+                        if (thinkingExpanded) {
+                            Spacer(Modifier.height(4.dp))
+                            Text(
+                                uiState.streamingThinkingContent,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onTertiaryContainer
+                            )
+                        }
+                    }
                 }
             }
 
@@ -325,8 +375,92 @@ fun ChatScreen(
         }
     }
 
-    // ── In-chat model picker ──────────────────────────────────────────────────
-    if (showModelPicker) {
+    // ── Thinking settings sheet ───────────────────────────────────────────────
+    if (showThinkingSheet) {
+        ModalBottomSheet(
+            onDismissRequest = { showThinkingSheet = false },
+            sheetState = thinkingSheetState
+        ) {
+            Text(
+                "Thinking",
+                style = MaterialTheme.typography.titleMedium,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+            )
+            HorizontalDivider()
+            Column(
+                modifier = Modifier
+                    .padding(horizontal = 16.dp, vertical = 12.dp)
+                    .verticalScroll(rememberScrollState())
+            ) {
+                // Enable / disable toggle
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
+                        Text("Enable thinking", style = MaterialTheme.typography.bodyMedium)
+                        Text(
+                            "Allows the model to reason before responding",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Switch(
+                        checked = uiState.thinkingEnabled,
+                        onCheckedChange = { viewModel.toggleThinking() }
+                    )
+                }
+
+                // Budget slider — only shown when thinking is on
+                if (uiState.thinkingEnabled) {
+                    Spacer(Modifier.height(16.dp))
+                    val budgetLabel = when {
+                        uiState.thinkingBudget == 0 -> "No limit"
+                        uiState.thinkingBudget >= 1024 -> "${uiState.thinkingBudget / 1024}K tokens"
+                        else -> "${uiState.thinkingBudget} tokens"
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text("Reasoning budget", style = MaterialTheme.typography.bodyMedium)
+                        Text(
+                            budgetLabel,
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                    Slider(
+                        value = uiState.thinkingBudget.toFloat(),
+                        onValueChange = { viewModel.setThinkingBudget(it.roundToInt()) },
+                        valueRange = 512f..32768f,
+                        steps = 62,  // 512-token increments
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(
+                            "512",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text(
+                            "32K",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+                Spacer(Modifier.height(16.dp))
+            }
+        }
+    }
+
+    // ── In-chat model picker ──────────────────────────────────────────────────    if (showModelPicker) {
         ModalBottomSheet(
             onDismissRequest = { showModelPicker = false },
             sheetState = modelPickerSheetState
@@ -395,6 +529,7 @@ private fun MessageBubble(message: ChatMessage) {
     val isUser = message.role == MessageRole.USER
     val isTool = message.role == MessageRole.TOOL
     var toolExpanded by remember { mutableStateOf(false) }
+    var thinkingExpanded by remember { mutableStateOf(false) }
     val clipboardManager = LocalClipboardManager.current
 
     val infiniteTransition = rememberInfiniteTransition(label = "cursor")
@@ -459,38 +594,88 @@ private fun MessageBubble(message: ChatMessage) {
                 }
             }
         } else {
-            Card(
-                modifier = Modifier
-                    .widthIn(max = 320.dp)
-                    .combinedClickable(
-                        onClick = {},
-                        onLongClick = {
-                            clipboardManager.setText(AnnotatedString(message.content))
-                        }
-                    ),
-                shape = RoundedCornerShape(
-                    topStart = 16.dp,
-                    topEnd = 16.dp,
-                    bottomStart = if (isUser) 16.dp else 4.dp,
-                    bottomEnd = if (isUser) 4.dp else 16.dp
-                ),
-                colors = CardDefaults.cardColors(
-                    containerColor = if (isUser) UserBubble else AssistantBubble
-                )
+            Column(
+                modifier = Modifier.widthIn(max = 320.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
-                Column(modifier = Modifier.padding(12.dp)) {
-                    Text(
-                        text = buildAnnotatedString {
-                            append(message.content)
-                            if (message.isStreaming) {
-                                withStyle(SpanStyle(color = Color.White.copy(alpha = cursorAlpha))) {
-                                    append("▌")
+                // Collapsible thinking/reasoning block (assistant messages only)
+                if (!isUser && message.thinkingContent != null) {
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .combinedClickable(
+                                onClick = { thinkingExpanded = !thinkingExpanded },
+                                onLongClick = {
+                                    clipboardManager.setText(AnnotatedString(message.thinkingContent))
                                 }
+                            ),
+                        shape = RoundedCornerShape(
+                            topStart = 16.dp,
+                            topEnd = 16.dp,
+                            bottomStart = 4.dp,
+                            bottomEnd = 4.dp
+                        ),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.tertiaryContainer
+                        )
+                    ) {
+                        Column(modifier = Modifier.padding(10.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    "🧠 Reasoning  ${if (thinkingExpanded) "▲" else "▼"}",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onTertiaryContainer.copy(alpha = 0.8f)
+                                )
                             }
-                        },
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = Color.White
+                            if (thinkingExpanded) {
+                                Spacer(Modifier.height(4.dp))
+                                Text(
+                                    message.thinkingContent,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onTertiaryContainer
+                                )
+                            }
+                        }
+                    }
+                }
+
+                Card(
+                    modifier = Modifier
+                        .widthIn(max = 320.dp)
+                        .combinedClickable(
+                            onClick = {},
+                            onLongClick = {
+                                clipboardManager.setText(AnnotatedString(message.content))
+                            }
+                        ),
+                    shape = RoundedCornerShape(
+                        topStart = 16.dp,
+                        topEnd = 16.dp,
+                        bottomStart = if (isUser) 16.dp else 4.dp,
+                        bottomEnd = if (isUser) 4.dp else 16.dp
+                    ),
+                    colors = CardDefaults.cardColors(
+                        containerColor = if (isUser) UserBubble else AssistantBubble
                     )
+                ) {
+                    Column(modifier = Modifier.padding(12.dp)) {
+                        Text(
+                            text = buildAnnotatedString {
+                                append(message.content)
+                                if (message.isStreaming) {
+                                    withStyle(SpanStyle(color = Color.White.copy(alpha = cursorAlpha))) {
+                                        append("▌")
+                                    }
+                                }
+                            },
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = Color.White
+                        )
+                    }
                 }
             }
         }

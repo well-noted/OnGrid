@@ -34,3 +34,11 @@ data class OllamaTagsResponse(
 data class OllamaVersionResponse(
     val version: String = ""
 )
+
+/**
+ * Response from POST /api/show — contains model capabilities, among other metadata.
+ * The `capabilities` list may include "completion", "tools", "thinking", etc.
+ */
+data class OllamaShowResponse(
+    val capabilities: List<String> = emptyList()
+)

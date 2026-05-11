@@ -39,6 +39,8 @@ data class PendingChatRequest(
 sealed class ChatServiceEvent {
     /** An incremental content update for a streaming assistant message. */
     data class Token(val msgId: String, val content: String) : ChatServiceEvent()
+    /** Incremental update for the thinking/reasoning content preceding the assistant's answer. */
+    data class ThinkingToken(val msgId: String, val thinking: String) : ChatServiceEvent()
     /** A complete [ChatMessage] that should be appended to the conversation (tool results and
      *  follow-up assistant placeholders created by the service during tool-call handling). */
     data class AppendMessage(val message: ChatMessage) : ChatServiceEvent()
@@ -48,7 +50,8 @@ sealed class ChatServiceEvent {
     data class TurnComplete(
         val msgId: String,
         val lastContent: String,
-        val error: String? = null
+        val error: String? = null,
+        val thinkingContent: String? = null
     ) : ChatServiceEvent()
 }
 

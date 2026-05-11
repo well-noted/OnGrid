@@ -4,6 +4,7 @@ import android.util.Log
 import com.google.gson.Gson
 import com.ongrid.app.data.model.OllamaChatRequest
 import com.ongrid.app.data.model.OllamaChatResponse
+import com.ongrid.app.data.model.OllamaShowResponse
 import com.ongrid.app.data.model.OllamaTagsResponse
 import com.ongrid.app.data.model.OllamaVersionResponse
 import kotlinx.coroutines.Dispatchers
@@ -56,6 +57,24 @@ class OllamaApi(private val client: OkHttpClient) {
         }
     } catch (e: IOException) {
         Log.d(TAG, "listModels failed for $baseUrl: ${e.message}")
+        null
+    }
+
+    /**
+     * Fetch detailed model info from /api/show, which includes a `capabilities` list.
+     * Returns null if the server is unreachable or the model is unknown.
+     */
+    suspend fun showModel(baseUrl: String, modelName: String): OllamaShowResponse? = try {
+        val body = gson.toJson(mapOf("model" to modelName)).toRequestBody(JSON_MEDIA_TYPE)
+        val request = Request.Builder().url("$baseUrl/api/show").post(body).build()
+        client.newCall(request).execute().use { response ->
+            if (response.isSuccessful) {
+                val responseBody = response.body?.string() ?: return null
+                gson.fromJson(responseBody, OllamaShowResponse::class.java)
+            } else null
+        }
+    } catch (e: IOException) {
+        Log.d(TAG, "showModel failed for $baseUrl/$modelName: ${e.message}")
         null
     }
 
