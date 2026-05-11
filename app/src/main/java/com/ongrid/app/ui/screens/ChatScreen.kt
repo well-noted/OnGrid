@@ -45,6 +45,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.Switch
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -95,6 +96,8 @@ fun ChatScreen(
     var inputText by remember { mutableStateOf("") }
     var showModelPicker by remember { mutableStateOf(false) }
     val modelPickerSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    var showToolSheet by remember { mutableStateOf(false) }
+    val toolSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val scope = rememberCoroutineScope()
 
     // Auto-scroll to bottom when new messages arrive
@@ -164,12 +167,14 @@ fun ChatScreen(
         ) {
             // Active tools indicator
             if (uiState.availableTools.isNotEmpty()) {
+                val activeCount = uiState.availableTools.count { it.function.name !in uiState.disabledToolNames }
                 Surface(
                     modifier = Modifier.fillMaxWidth(),
+                    onClick = { showToolSheet = true },
                     color = MaterialTheme.colorScheme.surfaceVariant
                 ) {
                     Text(
-                        "🔧 ${uiState.availableTools.size} MCP tool(s) active",
+                        "🔧 $activeCount/${uiState.availableTools.size} tool(s) active  ▾",
                         modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -268,6 +273,49 @@ fun ChatScreen(
         }
     }
 
+    // ── Per-conversation tool picker ──────────────────────────────────────────
+    if (showToolSheet) {
+        ModalBottomSheet(
+            onDismissRequest = { showToolSheet = false },
+            sheetState = toolSheetState
+        ) {
+            Text(
+                "Active Tools",
+                style = MaterialTheme.typography.titleMedium,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+            )
+            HorizontalDivider()
+            uiState.availableTools.forEach { tool ->
+                val isEnabled = tool.function.name !in uiState.disabledToolNames
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
+                        Text(
+                            tool.function.name,
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                        Text(
+                            tool.function.description,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 2
+                        )
+                    }
+                    Switch(
+                        checked = isEnabled,
+                        onCheckedChange = { viewModel.toggleTool(tool.function.name) }
+                    )
+                }
+            }
+            Spacer(Modifier.height(16.dp))
+        }
+    }
+
     // ── In-chat model picker ──────────────────────────────────────────────────
     if (showModelPicker) {
         ModalBottomSheet(
@@ -356,7 +404,7 @@ private fun MessageBubble(message: ChatMessage) {
         horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start
     ) {
         if (isTool) {
-            val isToolError = message.content.startsWith("Error") || message.content.contains("' failed:") || message.content.contains("' not found")
+            val isToolError = message.isError
             Card(
                 modifier = Modifier
                     .fillMaxWidth()

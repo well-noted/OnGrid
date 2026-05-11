@@ -27,7 +27,8 @@ import kotlinx.coroutines.launch
 data class ChatUiState(
     val isLoading: Boolean = false,
     val error: String? = null,
-    val availableTools: List<OllamaTool> = emptyList()
+    val availableTools: List<OllamaTool> = emptyList(),
+    val disabledToolNames: Set<String> = emptySet()
 )
 
 class ChatViewModel(application: Application) : AndroidViewModel(application) {
@@ -78,6 +79,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         currentConversationId = null
         titleGenerated = false
         _messages.value = emptyList()
+        _uiState.value = _uiState.value.copy(disabledToolNames = emptySet())
     }
 
     /** Called when the user reopens an existing conversation from the list. */
@@ -115,6 +117,14 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    /** Toggle a specific tool on/off for the current conversation. */
+    fun toggleTool(toolName: String) {
+        val current = _uiState.value.disabledToolNames
+        _uiState.value = _uiState.value.copy(
+            disabledToolNames = if (toolName in current) current - toolName else current + toolName
+        )
+    }
+
     /**
      * Send a user message and stream the assistant's response.
      *
@@ -140,7 +150,10 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         )
 
         val history = buildOllamaHistory()
-        val tools = _uiState.value.availableTools.takeIf { it.isNotEmpty() }
+        val disabled = _uiState.value.disabledToolNames
+        val tools = _uiState.value.availableTools
+            .filter { it.function.name !in disabled }
+            .takeIf { it.isNotEmpty() }
         val request = OllamaChatRequest(
             model = currentModel,
             messages = history,

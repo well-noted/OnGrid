@@ -9,6 +9,7 @@ data class ChatMessage(
     val toolCalls: List<ToolCall> = emptyList(),
     val toolCallId: String? = null,
     val isStreaming: Boolean = false,
+    val isError: Boolean = false,
     val timestamp: Long = System.currentTimeMillis()
 )
 

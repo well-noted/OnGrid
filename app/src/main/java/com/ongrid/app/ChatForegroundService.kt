@@ -10,6 +10,7 @@ import android.os.IBinder
 import androidx.core.app.NotificationCompat
 import androidx.core.app.Person
 import com.ongrid.app.data.model.ChatMessage
+import com.ongrid.app.data.model.McpInputSchema
 import com.ongrid.app.data.model.MessageRole
 import com.ongrid.app.data.model.OllamaChatMessage
 import com.ongrid.app.data.model.OllamaChatRequest
@@ -154,7 +155,15 @@ class ChatForegroundService : Service() {
                     val serverEntry = toolMap[funcName]
 
                     val (resultText, isError) = try {
-                        when {
+                        val schema: McpInputSchema? = when {
+                            funcName == "web_search" -> app.webSearchRepository.tool.inputSchema
+                            serverEntry != null -> serverEntry.second.inputSchema
+                            else -> null
+                        }
+                        val validationError = schema?.let { validateToolArgs(funcName, args, it) }
+                        if (validationError != null) {
+                            validationError to true
+                        } else when {
                             funcName == "web_search" -> {
                                 app.webSearchRepository.search(args) to false
                             }
@@ -182,7 +191,8 @@ class ChatForegroundService : Service() {
                     val toolResultMsg = ChatMessage(
                         role = MessageRole.TOOL,
                         content = resultText,
-                        toolCallId = funcName
+                        toolCallId = funcName,
+                        isError = isError
                     )
                     app.chatServiceChannel.send(ChatServiceEvent.AppendMessage(toolResultMsg))
 
@@ -223,6 +233,35 @@ class ChatForegroundService : Service() {
         } finally {
             stopSelf(startId)
         }
+    }
+
+    // -------------------------------------------------------------------------
+    // Tool argument validation
+    // -------------------------------------------------------------------------
+
+    /**
+     * Validates that all required fields declared in [schema] are present in [args]
+     * and non-blank. Returns a descriptive error string if validation fails, or null
+     * if the arguments are acceptable.
+     */
+    private fun validateToolArgs(
+        toolName: String,
+        args: Map<String, Any>,
+        schema: McpInputSchema
+    ): String? {
+        val missing = schema.required.filter { field ->
+            val v = args[field]
+            v == null || (v is String && v.isBlank())
+        }
+        if (missing.isEmpty()) return null
+        val details = missing.joinToString("; ") { field ->
+            val propInfo = schema.properties[field] as? Map<*, *>
+            val type = propInfo?.get("type") as? String ?: "any"
+            val desc = propInfo?.get("description") as? String
+            if (desc != null) "'$field' ($type — $desc)" else "'$field' ($type)"
+        }
+        return "Tool '$toolName' called with missing required argument(s): $details. " +
+            "Please call it again with all required fields provided."
     }
 
     // -------------------------------------------------------------------------
