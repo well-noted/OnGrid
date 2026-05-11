@@ -400,9 +400,9 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     private fun buildSystemPrompt(): String {
         val base = _uiState.value.systemPrompt.trim()
         return if (_uiState.value.agentPlanningEnabled) {
-            base + "\n\nWhen asked to perform a task that requires multiple steps or tool calls, " +
-                "begin by outputting a brief numbered plan before taking any action. " +
-                "After each step completes, briefly confirm the result before continuing to the next step."
+            base + "\n\nWhen performing multi-step tasks, work through all steps to completion " +
+                "without pausing to narrate progress. Use mark_steps_complete after each " +
+                "step succeeds, then immediately continue to the next tool call."
         } else {
             base
         }

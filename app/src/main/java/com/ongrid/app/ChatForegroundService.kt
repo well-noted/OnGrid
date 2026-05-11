@@ -282,7 +282,7 @@ class ChatForegroundService : Service() {
                                     )
                                 }
                                 val label = indices.joinToString(", ") { "step $it" }
-                                "Marked $label as complete." to false
+                                "Marked $label as complete. Continue to the next step." to false
                             }
                             funcName == "web_search" -> {
                                 app.webSearchRepository.search(args) to false
@@ -332,6 +332,31 @@ class ChatForegroundService : Service() {
                     val retryPrompt = "One or more tool calls failed (see results above). " +
                         "Please retry the failed call(s) with corrected arguments."
                     nextMessages += OllamaChatMessage(role = "user", content = retryPrompt)
+                }
+
+                // ---- Plan-progress reminder -----------------------------------------------
+                // After every tool round, inject a concise summary of plan state so the model
+                // always knows which step to do next and cannot accidentally repeat or skip one.
+                // Steps are only advanced by explicit mark_steps_complete calls — we never
+                // assume success based on a tool having run.
+                if (currentPlanSteps.isNotEmpty()) {
+                    val nextIncomplete = currentPlanSteps.firstOrNull { !it.isDone }
+                    val reminder = buildString {
+                        appendLine("[Plan status]")
+                        currentPlanSteps.forEach { step ->
+                            val marker = if (step.isDone) "[done]" else "[ ]"
+                            appendLine("$marker Step ${step.index}: ${step.text}")
+                        }
+                        if (nextIncomplete != null) {
+                            append("Step ${nextIncomplete.index} is not yet confirmed complete. " +
+                                "If Step ${nextIncomplete.index} just succeeded, you MUST call " +
+                                "mark_steps_complete([${nextIncomplete.index}]) NOW before calling " +
+                                "any other tool. Do not proceed to the next step without doing this.")
+                        } else {
+                            append("All plan steps are complete. Provide a final summary to the user.")
+                        }
+                    }
+                    nextMessages += OllamaChatMessage(role = "user", content = reminder)
                 }
 
                 // Create a new assistant placeholder for the follow-up turn and tell the
@@ -476,7 +501,8 @@ class ChatForegroundService : Service() {
             function = OllamaToolFunction(
                 name = "mark_steps_complete",
                 description = "Mark one or more steps from your plan as complete. " +
-                    "Call this after each step succeeds so the user can see your progress.",
+                    "Call this immediately after a step's tool call succeeds, " +
+                    "then continue to the next tool call without any text response.",
                 parameters = mapOf(
                     "type" to "object",
                     "properties" to mapOf(
