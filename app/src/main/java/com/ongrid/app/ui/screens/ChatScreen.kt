@@ -84,6 +84,7 @@ import androidx.compose.ui.unit.dp
 import com.ongrid.app.data.model.ChatMessage
 import com.ongrid.app.data.model.MessageRole
 import com.ongrid.app.ui.theme.AssistantBubble
+import com.ongrid.app.ui.theme.PlanBubble
 import com.ongrid.app.ui.theme.ToolBubble
 import com.ongrid.app.ui.theme.ToolErrorBubble
 import com.ongrid.app.ui.theme.UserBubble
@@ -555,6 +556,7 @@ fun ChatScreen(
 private fun MessageBubble(message: ChatMessage) {
     val isUser = message.role == MessageRole.USER
     val isTool = message.role == MessageRole.TOOL
+    val isPlan = message.isPlan
     var toolExpanded by remember { mutableStateOf(false) }
     var thinkingExpanded by remember { mutableStateOf(false) }
     val clipboardManager = LocalClipboardManager.current
@@ -575,6 +577,7 @@ private fun MessageBubble(message: ChatMessage) {
         horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start
     ) {
         if (isTool) {
+            // ── Tool result bubble ────────────────────────────────────────────
             val isToolError = message.isError
             Card(
                 modifier = Modifier
@@ -614,6 +617,55 @@ private fun MessageBubble(message: ChatMessage) {
                         Spacer(Modifier.height(4.dp))
                         Text(
                             text = message.content,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = Color.White
+                        )
+                    }
+                }
+            }
+        } else if (isPlan) {
+            // ── Plan bubble ───────────────────────────────────────────────────
+            var planExpanded by remember { mutableStateOf(true) }
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .combinedClickable(
+                        onClick = { planExpanded = !planExpanded },
+                        onLongClick = {
+                            clipboardManager.setText(AnnotatedString(message.content))
+                        }
+                    ),
+                shape = RoundedCornerShape(
+                    topStart = 16.dp,
+                    topEnd = 16.dp,
+                    bottomStart = 4.dp,
+                    bottomEnd = 16.dp
+                ),
+                colors = CardDefaults.cardColors(containerColor = PlanBubble)
+            ) {
+                Column(modifier = Modifier.padding(12.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            "📋 Plan  ${if (planExpanded) "▲" else "▼"}",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = Color.White.copy(alpha = 0.7f)
+                        )
+                    }
+                    if (planExpanded) {
+                        Spacer(Modifier.height(6.dp))
+                        Text(
+                            text = buildAnnotatedString {
+                                append(message.content)
+                                if (message.isStreaming) {
+                                    withStyle(SpanStyle(color = Color.White.copy(alpha = cursorAlpha))) {
+                                        append("▌")
+                                    }
+                                }
+                            },
                             style = MaterialTheme.typography.bodyMedium,
                             color = Color.White
                         )

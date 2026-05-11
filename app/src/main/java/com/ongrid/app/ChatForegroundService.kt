@@ -87,6 +87,73 @@ class ChatForegroundService : Service() {
         var currentRequest = pending.request
 
         try {
+            // ---- Guided planning phase -----------------------------------------------
+            // When planning is enabled and tools are present, run a first pass with tools
+            // stripped so the model is forced to output a text plan rather than jumping
+            // straight to tool calls. The plan is shown in its own assistant bubble; a
+            // fresh bubble is then created for the actual tool-use execution turn.
+            if (pending.guidedPlanningEnabled && currentRequest.tools?.isNotEmpty() == true) {
+                val planningNudge = "Before calling any tools, output a concise numbered " +
+                    "plan of the steps you will take to complete this task. " +
+                    "Do not call any tools yet — just output the plan."
+                // Disable tools AND thinking for the planning request: thinking tokens are
+                // silent in this phase so they would waste compute without any benefit.
+                val planningRequest = currentRequest.copy(
+                    tools = null,
+                    think = null,
+                    options = null,
+                    messages = currentRequest.messages +
+                        OllamaChatMessage(role = "user", content = planningNudge)
+                )
+                // Tell the ViewModel to render this message as a plan bubble.
+                app.chatServiceChannel.send(ChatServiceEvent.SetPlan(currentMsgId))
+                val planAccumulated = StringBuilder()
+                var planError: String? = null
+                try {
+                    app.ollamaRepository.streamChat(pending.baseUrl, planningRequest)
+                        .collect { chunk ->
+                            val delta = chunk.message?.content ?: ""
+                            if (delta.isNotEmpty()) {
+                                planAccumulated.append(delta)
+                                app.chatServiceChannel.send(
+                                    ChatServiceEvent.Token(currentMsgId, planAccumulated.toString())
+                                )
+                            }
+                        }
+                } catch (e: Exception) {
+                    planError = e.message
+                }
+                if (planError != null) {
+                    app.chatServiceChannel.send(
+                        ChatServiceEvent.TurnComplete(currentMsgId, planAccumulated.toString(), planError)
+                    )
+                    return
+                }
+                // Finalize the plan bubble
+                app.chatServiceChannel.send(
+                    ChatServiceEvent.FinalizeMessage(currentMsgId, planAccumulated.toString())
+                )
+                // Create a fresh assistant bubble for the execution turn
+                val execMsgId = UUID.randomUUID().toString()
+                app.chatServiceChannel.send(
+                    ChatServiceEvent.AppendMessage(
+                        ChatMessage(
+                            id = execMsgId,
+                            role = MessageRole.ASSISTANT,
+                            content = "",
+                            isStreaming = true
+                        )
+                    )
+                )
+                currentMsgId = execMsgId
+                // Inject the plan as an assistant message so the model remembers it,
+                // but do NOT include the ephemeral planning-nudge user message.
+                currentRequest = currentRequest.copy(
+                    messages = currentRequest.messages +
+                        OllamaChatMessage(role = "assistant", content = planAccumulated.toString())
+                )
+            }
+
             while (true) {
                 val accumulated = StringBuilder()
                 val thinkingAccumulated = StringBuilder()

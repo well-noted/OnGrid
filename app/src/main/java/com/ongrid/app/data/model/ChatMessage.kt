@@ -12,6 +12,8 @@ data class ChatMessage(
     val toolCallId: String? = null,
     val isStreaming: Boolean = false,
     val isError: Boolean = false,
+    /** When true this message is the guided-planning output, rendered with a distinct plan style. */
+    val isPlan: Boolean = false,
     /** Reasoning/thinking content produced by the model before its final answer. */
     val thinkingContent: String? = null,
     val timestamp: Long = System.currentTimeMillis()

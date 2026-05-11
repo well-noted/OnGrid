@@ -29,7 +29,8 @@ import java.util.concurrent.TimeUnit
 data class PendingChatRequest(
     val assistantMsgId: String,
     val baseUrl: String,
-    val request: OllamaChatRequest
+    val request: OllamaChatRequest,
+    val guidedPlanningEnabled: Boolean = false
 )
 
 /**
@@ -52,6 +53,8 @@ sealed class ChatServiceEvent {
         val content: String,
         val toolCalls: List<OllamaToolCall> = emptyList()
     ) : ChatServiceEvent()
+    /** Marks an in-flight assistant message as a guided-planning output. */
+    data class SetPlan(val msgId: String) : ChatServiceEvent()
     /** The entire conversational turn is finished (or failed). */
     data class TurnComplete(
         val msgId: String,

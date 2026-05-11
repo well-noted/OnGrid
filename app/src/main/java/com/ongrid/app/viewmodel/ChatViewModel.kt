@@ -245,7 +245,12 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         // Drain any leftover events from a previous (completed or cancelled) request.
         while (true) { app.chatServiceChannel.tryReceive().getOrNull() ?: break }
 
-        app.pendingChatRequest = PendingChatRequest(assistantMsgId, server.baseUrl, request)
+        app.pendingChatRequest = PendingChatRequest(
+            assistantMsgId,
+            server.baseUrl,
+            request,
+            guidedPlanningEnabled = _uiState.value.agentPlanningEnabled && tools != null
+        )
         _uiState.value = _uiState.value.copy(isLoading = true, error = null)
 
         // *** Must be called here — synchronously on the main thread — before we ever suspend. ***
@@ -267,6 +272,12 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                         _uiState.value = _uiState.value.copy(
                             streamingThinkingContent = event.thinking
                         )
+
+                    is ChatServiceEvent.SetPlan -> {
+                        _messages.value = _messages.value.map { msg ->
+                            if (msg.id == event.msgId) msg.copy(isPlan = true) else msg
+                        }
+                    }
 
                     is ChatServiceEvent.FinalizeMessage ->
                         if (event.content.isBlank() && event.toolCalls.isEmpty()) {
