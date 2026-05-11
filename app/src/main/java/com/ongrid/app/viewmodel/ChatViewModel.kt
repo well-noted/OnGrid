@@ -15,6 +15,9 @@ import com.ongrid.app.data.model.OllamaChatRequest
 import com.ongrid.app.data.model.OllamaRequestOptions
 import com.ongrid.app.data.model.OllamaServer
 import com.ongrid.app.data.model.OllamaTool
+import com.ongrid.app.data.model.OllamaToolCall
+import com.ongrid.app.data.repository.DEFAULT_SYSTEM_PROMPT
+import kotlinx.coroutines.flow.combine
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -37,7 +40,11 @@ data class ChatUiState(
     /** Token budget for thinking (0 = let the model decide). */
     val thinkingBudget: Int = 8192,
     /** Live thinking text accumulating while the model reasons during the current turn. */
-    val streamingThinkingContent: String = ""
+    val streamingThinkingContent: String = "",
+    /** System prompt sent at the top of every request. */
+    val systemPrompt: String = DEFAULT_SYSTEM_PROMPT,
+    /** When true, a planning instruction is appended to the system prompt. */
+    val agentPlanningEnabled: Boolean = true
 )
 
 class ChatViewModel(application: Application) : AndroidViewModel(application) {
@@ -61,6 +68,21 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     /** Non-null once a conversation has been created or loaded. */
     var currentConversationId: String? = null
         private set
+
+    init {
+        viewModelScope.launch {
+            app.settingsRepository.systemPrompt
+                .combine(app.settingsRepository.agentPlanningEnabled) { prompt, planning ->
+                    prompt to planning
+                }
+                .collect { (prompt, planning) ->
+                    _uiState.value = _uiState.value.copy(
+                        systemPrompt = prompt,
+                        agentPlanningEnabled = planning
+                    )
+                }
+        }
+    }
 
     /** True until the first assistant response has been fully persisted. */
     private var titleGenerated: Boolean = false
@@ -163,6 +185,13 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    /** Toggle the agent planning instruction on/off and persist the new value. */
+    fun toggleAgentPlanning() {
+        val newVal = !_uiState.value.agentPlanningEnabled
+        _uiState.value = _uiState.value.copy(agentPlanningEnabled = newVal)
+        viewModelScope.launch { app.settingsRepository.saveAgentPlanningEnabled(newVal) }
+    }
+
     /** Toggle a specific tool on/off for the current conversation. */
     fun toggleTool(toolName: String) {
         val current = _uiState.value.disabledToolNames
@@ -240,10 +269,10 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                         )
 
                     is ChatServiceEvent.FinalizeMessage ->
-                        if (event.content.isBlank()) {
+                        if (event.content.isBlank() && event.toolCalls.isEmpty()) {
                             _messages.value = _messages.value.filter { it.id != event.msgId }
                         } else {
-                            finalizeMessage(event.msgId, event.content)
+                            finalizeMessage(event.msgId, event.content, event.toolCalls)
                         }
 
                     is ChatServiceEvent.AppendMessage -> {
@@ -333,15 +362,34 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         return entity.id
     }
 
-    private fun buildOllamaHistory(): List<OllamaChatMessage> =
+    private fun buildOllamaHistory(): List<OllamaChatMessage> {
+        val history = mutableListOf<OllamaChatMessage>()
+        val systemText = buildSystemPrompt()
+        if (systemText.isNotBlank()) {
+            history += OllamaChatMessage(role = "system", content = systemText)
+        }
         _messages.value
             .filter { !it.isStreaming }
-            .map { msg ->
+            .mapTo(history) { msg ->
                 OllamaChatMessage(
                     role = msg.role.name.lowercase(),
-                    content = msg.content
+                    content = if (msg.ollamaToolCalls.isNotEmpty()) msg.content.ifEmpty { null } else msg.content,
+                    tool_calls = msg.ollamaToolCalls.takeIf { it.isNotEmpty() }
                 )
             }
+        return history
+    }
+
+    private fun buildSystemPrompt(): String {
+        val base = _uiState.value.systemPrompt.trim()
+        return if (_uiState.value.agentPlanningEnabled) {
+            base + "\n\nWhen asked to perform a task that requires multiple steps or tool calls, " +
+                "begin by outputting a brief numbered plan before taking any action. " +
+                "After each step completes, briefly confirm the result before continuing to the next step."
+        } else {
+            base
+        }
+    }
 
     private fun updateStreamingMessage(id: String, content: String) {
         _messages.value = _messages.value.map { msg ->
@@ -349,9 +397,9 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    private fun finalizeMessage(id: String, content: String) {
+    private fun finalizeMessage(id: String, content: String, ollamaToolCalls: List<OllamaToolCall> = emptyList()) {
         _messages.value = _messages.value.map { msg ->
-            if (msg.id == id) msg.copy(content = content, isStreaming = false) else msg
+            if (msg.id == id) msg.copy(content = content, isStreaming = false, ollamaToolCalls = ollamaToolCalls) else msg
         }
     }
 

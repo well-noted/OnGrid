@@ -21,6 +21,7 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Storage
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -74,7 +75,8 @@ fun ConversationListScreen(
     viewModel: ConversationListViewModel,
     onOpenConversation: (conversationId: String) -> Unit,
     onNewChat: (server: OllamaServer, modelName: String) -> Unit,
-    onManageServers: () -> Unit
+    onManageServers: () -> Unit,
+    onOpenSettings: () -> Unit
 ) {
     val serverSetupState by viewModel.serverSetupState.collectAsState()
     val projects by viewModel.projects.collectAsState()
@@ -100,7 +102,10 @@ fun ConversationListScreen(
                 ),
                 actions = {
                     IconButton(onClick = onManageServers) {
-                        Icon(Icons.Default.Settings, contentDescription = "Manage Servers")
+                        Icon(Icons.Default.Storage, contentDescription = "Manage Servers")
+                    }
+                    IconButton(onClick = onOpenSettings) {
+                        Icon(Icons.Default.Settings, contentDescription = "Settings")
                     }
                     IconButton(onClick = { showNewProjectDialog = true }) {
                         Icon(Icons.Default.Add, contentDescription = "New Project")

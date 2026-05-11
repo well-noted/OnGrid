@@ -374,6 +374,28 @@ fun ChatScreen(
                         )
                     }
                 }
+                HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
+                        Text("Guided planning", style = MaterialTheme.typography.bodyMedium)
+                        Text(
+                            "Ask the model to outline a plan before calling tools",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 2
+                        )
+                    }
+                    Switch(
+                        checked = uiState.agentPlanningEnabled,
+                        onCheckedChange = { viewModel.toggleAgentPlanning() }
+                    )
+                }
                 Spacer(Modifier.height(16.dp))
             }
         }

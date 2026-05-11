@@ -7,6 +7,8 @@ data class ChatMessage(
     val role: MessageRole,
     val content: String,
     val toolCalls: List<ToolCall> = emptyList(),
+    /** Raw Ollama tool-call objects on an assistant message; used to rebuild history correctly. */
+    val ollamaToolCalls: List<OllamaToolCall> = emptyList(),
     val toolCallId: String? = null,
     val isStreaming: Boolean = false,
     val isError: Boolean = false,

@@ -149,7 +149,7 @@ class ChatForegroundService : Service() {
                 // Clear the streaming cursor on the current assistant bubble before
                 // appending tool results — only the final placeholder should blink.
                 app.chatServiceChannel.send(
-                    ChatServiceEvent.FinalizeMessage(currentMsgId, accumulated.toString())
+                    ChatServiceEvent.FinalizeMessage(currentMsgId, accumulated.toString(), toolCalls)
                 )
 
                 // Extend the conversation history with the assistant message that

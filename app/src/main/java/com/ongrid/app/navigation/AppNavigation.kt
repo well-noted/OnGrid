@@ -19,11 +19,13 @@ import com.ongrid.app.ui.screens.ChatScreen
 import com.ongrid.app.ui.screens.ConversationListScreen
 import com.ongrid.app.ui.screens.DiscoveryScreen
 import com.ongrid.app.ui.screens.McpServerScreen
+import com.ongrid.app.ui.screens.SettingsScreen
 import com.ongrid.app.viewmodel.ChatViewModel
 import com.ongrid.app.viewmodel.ConversationListViewModel
 import com.ongrid.app.viewmodel.DiscoveryViewModel
 import com.ongrid.app.viewmodel.McpViewModel
 import com.ongrid.app.viewmodel.ServerSetupState
+import com.ongrid.app.viewmodel.SettingsViewModel
 
 object Routes {
     const val CONVERSATIONS = "conversations"
@@ -31,6 +33,7 @@ object Routes {
     const val CHAT_NEW = "chat/new/{serverHost}/{serverPort}/{modelName}"
     const val CHAT_EXISTING = "chat/existing/{conversationId}"
     const val MCP_SERVERS = "mcp_servers"
+    const val SETTINGS = "settings"
 
     fun discoveryRoute(autoScan: Boolean = false) = "discovery?autoScan=$autoScan"
     fun chatNewRoute(serverHost: String, serverPort: Int, modelName: String) =
@@ -81,6 +84,9 @@ fun AppNavigation() {
                         },
                         onManageServers = {
                             navController.navigate(Routes.discoveryRoute(autoScan = false))
+                        },
+                        onOpenSettings = {
+                            navController.navigate(Routes.SETTINGS)
                         }
                     )
                 }
@@ -138,6 +144,14 @@ fun AppNavigation() {
         composable(Routes.MCP_SERVERS) {
             McpServerScreen(
                 viewModel = mcpViewModel,
+                onNavigateBack = { navController.popBackStack() }
+            )
+        }
+
+        composable(Routes.SETTINGS) {
+            val settingsViewModel: SettingsViewModel = viewModel()
+            SettingsScreen(
+                viewModel = settingsViewModel,
                 onNavigateBack = { navController.popBackStack() }
             )
         }

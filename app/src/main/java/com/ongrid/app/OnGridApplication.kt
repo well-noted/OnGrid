@@ -7,6 +7,7 @@ import androidx.room.Room
 import com.ongrid.app.data.local.AppDatabase
 import com.ongrid.app.data.model.ChatMessage
 import com.ongrid.app.data.model.OllamaChatRequest
+import com.ongrid.app.data.model.OllamaToolCall
 import com.ongrid.app.data.network.OllamaApi
 import com.ongrid.app.data.network.McpApi
 import com.ongrid.app.data.network.NetworkScanner
@@ -15,6 +16,7 @@ import com.ongrid.app.data.repository.ConversationRepository
 import com.ongrid.app.data.repository.McpRepository
 import com.ongrid.app.data.repository.OllamaRepository
 import com.ongrid.app.data.repository.ServerRepository
+import com.ongrid.app.data.repository.SettingsRepository
 import com.ongrid.app.data.repository.WebSearchRepository
 import kotlinx.coroutines.channels.Channel
 import okhttp3.OkHttpClient
@@ -45,7 +47,11 @@ sealed class ChatServiceEvent {
      *  follow-up assistant placeholders created by the service during tool-call handling). */
     data class AppendMessage(val message: ChatMessage) : ChatServiceEvent()
     /** Clears the streaming cursor on an intermediate assistant message without ending the turn. */
-    data class FinalizeMessage(val msgId: String, val content: String) : ChatServiceEvent()
+    data class FinalizeMessage(
+        val msgId: String,
+        val content: String,
+        val toolCalls: List<OllamaToolCall> = emptyList()
+    ) : ChatServiceEvent()
     /** The entire conversational turn is finished (or failed). */
     data class TurnComplete(
         val msgId: String,
@@ -98,6 +104,7 @@ class OnGridApplication : Application() {
     }
     val conversationRepository: ConversationRepository by lazy { ConversationRepository(database) }
     val serverRepository: ServerRepository by lazy { ServerRepository(database, this) }
+    val settingsRepository: SettingsRepository by lazy { SettingsRepository(this) }
 
     /** Set by [ChatViewModel] before starting [ChatForegroundService]; consumed by the service. */
     @Volatile var pendingChatRequest: PendingChatRequest? = null
