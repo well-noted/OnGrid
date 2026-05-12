@@ -89,12 +89,21 @@ class ChatForegroundService : Service() {
         try {
             while (true) {
                 val accumulated = StringBuilder()
+                val thinkingAccumulated = StringBuilder()
                 var toolCalls: List<OllamaToolCall> = emptyList()
                 var streamError: String? = null
 
                 try {
                     app.ollamaRepository.streamChat(pending.baseUrl, currentRequest)
                         .collect { chunk ->
+                            // Thinking delta (reasoning tokens)
+                            val thinkingDelta = chunk.message?.thinking ?: ""
+                            if (thinkingDelta.isNotEmpty()) {
+                                thinkingAccumulated.append(thinkingDelta)
+                                app.chatServiceChannel.send(
+                                    ChatServiceEvent.ThinkingToken(currentMsgId, thinkingAccumulated.toString())
+                                )
+                            }
                             val delta = chunk.message?.content ?: ""
                             if (delta.isNotEmpty()) {
                                 accumulated.append(delta)
@@ -120,7 +129,11 @@ class ChatForegroundService : Service() {
                 // No tool calls → turn is done
                 if (toolCalls.isEmpty()) {
                     app.chatServiceChannel.send(
-                        ChatServiceEvent.TurnComplete(currentMsgId, accumulated.toString())
+                        ChatServiceEvent.TurnComplete(
+                            currentMsgId,
+                            accumulated.toString(),
+                            thinkingContent = thinkingAccumulated.toString().ifEmpty { null }
+                        )
                     )
                     if (!app.isAppForegrounded) {
                         postCompletionNotification(accumulated.toString())
@@ -226,7 +239,9 @@ class ChatForegroundService : Service() {
                     model = currentRequest.model,
                     messages = nextMessages,
                     stream = true,
-                    tools = currentRequest.tools
+                    tools = currentRequest.tools,
+                    think = currentRequest.think,
+                    options = currentRequest.options
                 )
                 // Loop → stream the follow-up turn
             }

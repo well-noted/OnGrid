@@ -30,6 +30,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.filled.Send
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.Card
@@ -39,10 +40,12 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -84,6 +87,7 @@ import com.ongrid.app.ui.theme.ToolBubble
 import com.ongrid.app.ui.theme.ToolErrorBubble
 import com.ongrid.app.ui.theme.UserBubble
 import com.ongrid.app.viewmodel.ChatViewModel
+import kotlin.math.roundToInt
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -101,6 +105,8 @@ fun ChatScreen(
     val modelPickerSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var showToolSheet by remember { mutableStateOf(false) }
     val toolSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    var showThinkingSheet by remember { mutableStateOf(false) }
+    val thinkingSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val scope = rememberCoroutineScope()
 
     // Auto-scroll to bottom when new messages arrive
@@ -140,6 +146,18 @@ fun ChatScreen(
                     }
                 },
                 actions = {
+                    if (uiState.supportsThinking) {
+                        IconButton(onClick = { showThinkingSheet = true }) {
+                            Icon(
+                                Icons.Default.Psychology,
+                                contentDescription = "Thinking settings",
+                                tint = if (uiState.thinkingEnabled)
+                                    MaterialTheme.colorScheme.primary
+                                else
+                                    LocalContentColor.current
+                            )
+                        }
+                    }
                     if (uiState.availableTools.isNotEmpty()) {
                         Box(
                             modifier = Modifier
@@ -177,11 +195,55 @@ fun ChatScreen(
                     color = MaterialTheme.colorScheme.surfaceVariant
                 ) {
                     Text(
-                        "🔧 $activeCount/${uiState.availableTools.size} tool(s) active  ▾",
+                        "\uD83D\uDD27 $activeCount/${uiState.availableTools.size} tool(s) active  \u25BE",
                         modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
+                }
+            }
+
+            // Live streaming thinking/reasoning banner
+            if (uiState.streamingThinkingContent.isNotEmpty()) {
+                val thinkingScrollState = rememberScrollState()
+                LaunchedEffect(uiState.streamingThinkingContent) {
+                    thinkingScrollState.animateScrollTo(thinkingScrollState.maxValue)
+                }
+                var thinkingBannerExpanded by remember { mutableStateOf(true) }
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    color = MaterialTheme.colorScheme.tertiaryContainer,
+                    onClick = { thinkingBannerExpanded = !thinkingBannerExpanded }
+                ) {
+                    Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                "\uD83E\uDDE0 Reasoning…",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onTertiaryContainer
+                            )
+                            Text(
+                                if (thinkingBannerExpanded) "\u25B2" else "\u25BC",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onTertiaryContainer
+                            )
+                        }
+                        if (thinkingBannerExpanded) {
+                            Text(
+                                uiState.streamingThinkingContent,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onTertiaryContainer,
+                                modifier = Modifier
+                                    .heightIn(max = 200.dp)
+                                    .verticalScroll(thinkingScrollState)
+                                    .padding(top = 4.dp)
+                            )
+                        }
+                    }
                 }
             }
 
@@ -273,6 +335,57 @@ fun ChatScreen(
                     }
                 }
             }
+        }
+    }
+
+    // ── Thinking settings sheet ───────────────────────────────────────────────
+    if (showThinkingSheet) {
+        ModalBottomSheet(
+            onDismissRequest = { showThinkingSheet = false },
+            sheetState = thinkingSheetState
+        ) {
+            Text(
+                "Thinking / Reasoning",
+                style = MaterialTheme.typography.titleMedium,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+            )
+            HorizontalDivider()
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Enable thinking", style = MaterialTheme.typography.bodyMedium)
+                    Text(
+                        "Model produces a reasoning trace before answering",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Switch(
+                    checked = uiState.thinkingEnabled,
+                    onCheckedChange = { viewModel.toggleThinking() }
+                )
+            }
+            if (uiState.thinkingEnabled) {
+                HorizontalDivider()
+                Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
+                    Text(
+                        "Token budget: ${uiState.thinkingBudget}",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                    Slider(
+                        value = uiState.thinkingBudget.toFloat(),
+                        onValueChange = { viewModel.setThinkingBudget(it.roundToInt()) },
+                        valueRange = 512f..32768f,
+                        steps = 0
+                    )
+                }
+            }
+            Spacer(Modifier.height(16.dp))
         }
     }
 
@@ -395,6 +508,7 @@ private fun MessageBubble(message: ChatMessage) {
     val isUser = message.role == MessageRole.USER
     val isTool = message.role == MessageRole.TOOL
     var toolExpanded by remember { mutableStateOf(false) }
+    var thinkingExpanded by remember { mutableStateOf(false) }
     val clipboardManager = LocalClipboardManager.current
 
     val infiniteTransition = rememberInfiniteTransition(label = "cursor")
@@ -438,12 +552,12 @@ private fun MessageBubble(message: ChatMessage) {
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            "🔧 ${message.toolCallId ?: "Tool Result"}",
+                            "\uD83D\uDD27 ${message.toolCallId ?: "Tool Result"}",
                             style = MaterialTheme.typography.labelSmall,
                             color = Color.White.copy(alpha = 0.7f)
                         )
                         Text(
-                            if (toolExpanded) "▲" else "▼",
+                            if (toolExpanded) "\u25B2" else "\u25BC",
                             style = MaterialTheme.typography.labelSmall,
                             color = Color.White.copy(alpha = 0.7f)
                         )
@@ -459,38 +573,85 @@ private fun MessageBubble(message: ChatMessage) {
                 }
             }
         } else {
-            Card(
-                modifier = Modifier
-                    .widthIn(max = 320.dp)
-                    .combinedClickable(
-                        onClick = {},
-                        onLongClick = {
-                            clipboardManager.setText(AnnotatedString(message.content))
-                        }
-                    ),
-                shape = RoundedCornerShape(
-                    topStart = 16.dp,
-                    topEnd = 16.dp,
-                    bottomStart = if (isUser) 16.dp else 4.dp,
-                    bottomEnd = if (isUser) 4.dp else 16.dp
-                ),
-                colors = CardDefaults.cardColors(
-                    containerColor = if (isUser) UserBubble else AssistantBubble
-                )
-            ) {
-                Column(modifier = Modifier.padding(12.dp)) {
-                    Text(
-                        text = buildAnnotatedString {
-                            append(message.content)
-                            if (message.isStreaming) {
-                                withStyle(SpanStyle(color = Color.White.copy(alpha = cursorAlpha))) {
-                                    append("▌")
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                // Reasoning card (only for finalized assistant messages with thinking content)
+                if (!isUser && message.thinkingContent != null) {
+                    Card(
+                        modifier = Modifier
+                            .widthIn(max = 320.dp)
+                            .combinedClickable(
+                                onClick = { thinkingExpanded = !thinkingExpanded },
+                                onLongClick = {
+                                    clipboardManager.setText(AnnotatedString(message.thinkingContent))
                                 }
+                            ),
+                        shape = RoundedCornerShape(12.dp),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.tertiaryContainer
+                        )
+                    ) {
+                        Column(modifier = Modifier.padding(10.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    "\uD83E\uDDE0 Reasoning",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onTertiaryContainer
+                                )
+                                Text(
+                                    if (thinkingExpanded) "\u25B2" else "\u25BC",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onTertiaryContainer
+                                )
                             }
-                        },
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = Color.White
+                            if (thinkingExpanded) {
+                                Spacer(Modifier.height(4.dp))
+                                Text(
+                                    text = message.thinkingContent,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onTertiaryContainer
+                                )
+                            }
+                        }
+                    }
+                }
+
+                Card(
+                    modifier = Modifier
+                        .widthIn(max = 320.dp)
+                        .combinedClickable(
+                            onClick = {},
+                            onLongClick = {
+                                clipboardManager.setText(AnnotatedString(message.content))
+                            }
+                        ),
+                    shape = RoundedCornerShape(
+                        topStart = 16.dp,
+                        topEnd = 16.dp,
+                        bottomStart = if (isUser) 16.dp else 4.dp,
+                        bottomEnd = if (isUser) 4.dp else 16.dp
+                    ),
+                    colors = CardDefaults.cardColors(
+                        containerColor = if (isUser) UserBubble else AssistantBubble
                     )
+                ) {
+                    Column(modifier = Modifier.padding(12.dp)) {
+                        Text(
+                            text = buildAnnotatedString {
+                                append(message.content)
+                                if (message.isStreaming) {
+                                    withStyle(SpanStyle(color = Color.White.copy(alpha = cursorAlpha))) {
+                                        append("\u258C")
+                                    }
+                                }
+                            },
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = Color.White
+                        )
+                    }
                 }
             }
         }
