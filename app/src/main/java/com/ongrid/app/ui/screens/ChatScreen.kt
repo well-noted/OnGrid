@@ -84,6 +84,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.unit.dp
+import com.mikepenz.markdown.m3.Markdown
+import com.mikepenz.markdown.m3.markdownColor
+import com.mikepenz.markdown.m3.markdownTypography
 import com.ongrid.app.data.model.ChatMessage
 import com.ongrid.app.data.model.MessageRole
 import com.ongrid.app.ui.theme.AssistantBubble
@@ -846,18 +849,33 @@ private fun MessageBubble(message: ChatMessage) {
                     )
                 ) {
                     Column(modifier = Modifier.padding(12.dp)) {
-                        Text(
-                            text = buildAnnotatedString {
-                                append(message.content)
-                                if (message.isStreaming) {
-                                    withStyle(SpanStyle(color = Color.White.copy(alpha = cursorAlpha))) {
-                                        append("\u258C")
+                        if (!isUser && !message.isStreaming) {
+                            Markdown(
+                                content = message.content,
+                                colors = markdownColor(
+                                    text = Color.White,
+                                    codeBackground = Color.Black.copy(alpha = 0.3f),
+                                    inlineCodeBackground = Color.Black.copy(alpha = 0.3f),
+                                ),
+                                typography = markdownTypography(
+                                    text = MaterialTheme.typography.bodyMedium,
+                                    code = MaterialTheme.typography.bodySmall,
+                                ),
+                            )
+                        } else {
+                            Text(
+                                text = buildAnnotatedString {
+                                    append(message.content)
+                                    if (message.isStreaming) {
+                                        withStyle(SpanStyle(color = Color.White.copy(alpha = cursorAlpha))) {
+                                            append("\u258C")
+                                        }
                                     }
-                                }
-                            },
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = Color.White
-                        )
+                                },
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = Color.White
+                            )
+                        }
                     }
                 }
             }
