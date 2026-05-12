@@ -32,7 +32,9 @@ import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Compress
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.filled.Send
 import androidx.compose.material.icons.filled.Stop
@@ -116,6 +118,9 @@ fun ChatScreen(
     var showThinkingSheet by remember { mutableStateOf(false) }
     val thinkingSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val skillPickerSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    var showProjectGroupingSheet by remember { mutableStateOf(false) }
+    val projectGroupingSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    var isCompressing by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
 
     // Auto-scroll to bottom when new messages arrive
@@ -155,6 +160,20 @@ fun ChatScreen(
                     }
                 },
                 actions = {
+                    // Compress context button — shown when context usage > 80%
+                    if (uiState.showCompressionButton && !isCompressing) {
+                        IconButton(onClick = {
+                            isCompressing = true
+                            viewModel.compressContext()
+                            isCompressing = false
+                        }) {
+                            Icon(
+                                Icons.Default.Compress,
+                                contentDescription = "Compress context — Summarise earlier messages to free up context space",
+                                tint = MaterialTheme.colorScheme.error
+                            )
+                        }
+                    }
                     if (uiState.supportsThinking) {
                         IconButton(onClick = { showThinkingSheet = true }) {
                             Icon(
@@ -209,6 +228,103 @@ fun ChatScreen(
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
+                }
+            }
+
+            // Skill suggestion chip — shown when utility agent suggests a skill
+            if (uiState.suggestedSkillName != null) {
+                val suggestedSkill = uiState.availableSkills.firstOrNull { it.name == uiState.suggestedSkillName }
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    color = MaterialTheme.colorScheme.secondaryContainer
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Icon(
+                                Icons.Default.AutoAwesome,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp),
+                                tint = MaterialTheme.colorScheme.onSecondaryContainer
+                            )
+                            Text(
+                                "Suggested skill: ${uiState.suggestedSkillName} — Add?",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSecondaryContainer
+                            )
+                        }
+                        Row {
+                            if (suggestedSkill != null) {
+                                TextButton(onClick = {
+                                    viewModel.activateSkill(suggestedSkill)
+                                    viewModel.dismissSuggestedSkill()
+                                }) {
+                                    Text("Add", style = MaterialTheme.typography.labelSmall)
+                                }
+                            }
+                            IconButton(
+                                onClick = { viewModel.dismissSuggestedSkill() },
+                                modifier = Modifier.size(32.dp)
+                            ) {
+                                Icon(Icons.Default.Close, contentDescription = "Dismiss", modifier = Modifier.size(16.dp))
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Project grouping banner — shown when similar conversations are detected
+            if (uiState.similarConversationIds.isNotEmpty()) {
+                val count = uiState.similarConversationIds.size
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    color = MaterialTheme.colorScheme.tertiaryContainer
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Icon(
+                                Icons.Default.FolderOpen,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp),
+                                tint = MaterialTheme.colorScheme.onTertiaryContainer
+                            )
+                            Text(
+                                "This looks similar to $count other conversation(s). Group into a project?",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onTertiaryContainer
+                            )
+                        }
+                        Row {
+                            TextButton(onClick = { showProjectGroupingSheet = true }) {
+                                Text("Group", style = MaterialTheme.typography.labelSmall)
+                            }
+                            IconButton(
+                                onClick = { viewModel.dismissSimilarConversations() },
+                                modifier = Modifier.size(32.dp)
+                            ) {
+                                Icon(Icons.Default.Close, contentDescription = "Dismiss", modifier = Modifier.size(16.dp))
+                            }
+                        }
+                    }
                 }
             }
 
@@ -673,6 +789,102 @@ fun ChatScreen(
                 }
             }
             Spacer(Modifier.height(16.dp))
+        }
+    }
+
+    // ── Project grouping sheet ─────────────────────────────────────────────────
+    if (showProjectGroupingSheet) {
+        val allProjects by viewModel.allProjects.collectAsState(initial = emptyList())
+        var newProjectName by remember { mutableStateOf("") }
+        ModalBottomSheet(
+            onDismissRequest = { showProjectGroupingSheet = false },
+            sheetState = projectGroupingSheetState
+        ) {
+            Text(
+                "Group into Project",
+                style = MaterialTheme.typography.titleMedium,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+            )
+            HorizontalDivider()
+            Column(
+                modifier = Modifier
+                    .heightIn(max = 500.dp)
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 8.dp)
+            ) {
+                if (allProjects.isNotEmpty()) {
+                    Text(
+                        "Existing projects",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(start = 8.dp, top = 8.dp, bottom = 4.dp)
+                    )
+                    allProjects.forEach { project ->
+                        Card(
+                            onClick = {
+                                viewModel.setProjectForConversation(project.id)
+                                viewModel.dismissSimilarConversations()
+                                scope.launch { projectGroupingSheetState.hide() }
+                                    .invokeOnCompletion { showProjectGroupingSheet = false }
+                            },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 2.dp),
+                            colors = CardDefaults.cardColors(
+                                containerColor = if (project.id == uiState.currentProjectId)
+                                    MaterialTheme.colorScheme.primaryContainer
+                                else
+                                    MaterialTheme.colorScheme.surfaceVariant
+                            )
+                        ) {
+                            Text(
+                                project.name,
+                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+                        }
+                    }
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+                }
+                Text(
+                    "Create new project",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(start = 8.dp, bottom = 4.dp)
+                )
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    androidx.compose.material3.OutlinedTextField(
+                        value = newProjectName,
+                        onValueChange = { newProjectName = it },
+                        placeholder = { Text("Project name") },
+                        modifier = Modifier.weight(1f),
+                        singleLine = true,
+                        shape = RoundedCornerShape(12.dp)
+                    )
+                    androidx.compose.material3.Button(
+                        onClick = {
+                            if (newProjectName.isNotBlank()) {
+                                scope.launch {
+                                    val project = viewModel.createProjectAndAssign(newProjectName.trim())
+                                    viewModel.dismissSimilarConversations()
+                                    projectGroupingSheetState.hide()
+                                    showProjectGroupingSheet = false
+                                }
+                            }
+                        },
+                        enabled = newProjectName.isNotBlank()
+                    ) {
+                        Text("Create")
+                    }
+                }
+                Spacer(Modifier.height(16.dp))
+            }
         }
     }
 }

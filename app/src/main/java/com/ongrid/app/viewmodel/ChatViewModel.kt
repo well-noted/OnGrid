@@ -16,6 +16,7 @@ import com.ongrid.app.data.model.OllamaRequestOptions
 import com.ongrid.app.data.model.OllamaServer
 import com.ongrid.app.data.model.OllamaTool
 import com.ongrid.app.data.local.SkillEntity
+import com.ongrid.app.data.local.ProjectMemoryEntity
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -51,7 +52,21 @@ data class ChatUiState(
     /** IDs of skills currently injected into the conversation. */
     val activeSkillIds: Set<String> = emptySet(),
     /** True when the skill picker sheet should be shown. */
-    val showSkillPicker: Boolean = false
+    val showSkillPicker: Boolean = false,
+    /** Non-null when the utility agent suggests a skill for the current message. */
+    val suggestedSkillName: String? = null,
+    /** IDs of conversations that seem similar to the current one (project grouping suggestion). */
+    val similarConversationIds: List<String> = emptyList(),
+    /** True when token usage exceeds 80% of context length. */
+    val showCompressionButton: Boolean = false,
+    /** The project currently associated with this conversation. */
+    val currentProjectId: String? = null,
+    /** Memories loaded from the current project. */
+    val projectMemories: List<ProjectMemoryEntity> = emptyList(),
+    /** Resolved utility server base URL (falls back to conversation server). */
+    val utilityBaseUrl: String = "",
+    /** Resolved utility model name (falls back to conversation model). */
+    val utilityModelName: String = ""
 ) {
     /** True when extended reasoning is enabled for this conversation. */
     val isThinkingOn: Boolean
@@ -64,6 +79,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     private val repo = app.conversationRepository
     private val serverRepo = app.serverRepository
     private val ollamaRepo = app.ollamaRepository
+    private val utilityAgentRepo = app.utilityAgentRepository
+    private val settingsRepo = app.settingsRepository
 
     private val _messages = MutableStateFlow<List<ChatMessage>>(emptyList())
     val messages: StateFlow<List<ChatMessage>> = _messages.asStateFlow()
@@ -106,6 +123,14 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             }
         }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
+    /** All projects — used by the project grouping sheet in ChatScreen. */
+    val allProjects: StateFlow<List<com.ongrid.app.data.local.ProjectEntity>> =
+        repo.allProjects.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    /** Latest utility agent settings — cached so sendMessage can read without suspending. */
+    private val currentSettings: StateFlow<com.ongrid.app.data.repository.UtilitySettings> =
+        settingsRepo.settings.stateIn(viewModelScope, SharingStarted.Eagerly, com.ongrid.app.data.repository.UtilitySettings())
+
     // ── Initialisation ────────────────────────────────────────────────────────
 
     /** Called when the user starts a brand-new chat after picking a server/model. */
@@ -122,13 +147,19 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             lastTurnUsedThinking = false,
             streamingThinkingContent = "",
             modelContextLength = null,
-            tokensUsedLastTurn = 0
+            tokensUsedLastTurn = 0,
+            currentProjectId = null,
+            projectMemories = emptyList(),
+            suggestedSkillName = null,
+            similarConversationIds = emptyList(),
+            showCompressionButton = false
         )
         // Apply the global default; DataStore is fast after first read
         viewModelScope.launch {
             val defaultOn = serverRepo.defaultThinkingOn.first()
             _uiState.value = _uiState.value.copy(thinkingEnabled = defaultOn)
         }
+        viewModelScope.launch { resolveUtilityModel() }
         checkThinkingSupport(server.baseUrl, modelName)
     }
 
@@ -144,8 +175,12 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             val hadThinking = _messages.value.any { it.thinkingContent != null }
             _uiState.value = _uiState.value.copy(
                 thinkingEnabled = entity.thinkingEnabled,
-                lastTurnUsedThinking = hadThinking
+                lastTurnUsedThinking = hadThinking,
+                currentProjectId = entity.projectId
             )
+            // Load project memories if there's an associated project
+            entity.projectId?.let { loadProjectMemories(it) }
+            resolveUtilityModel()
             loadTools()
             checkThinkingSupport(currentServer!!.baseUrl, currentModel)
         }
@@ -259,6 +294,34 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             Intent(getApplication(), ChatForegroundService::class.java)
         )
 
+        // Fire-and-forget utility agent calls for the first message (skill suggestion + similarity)
+        val utilityBaseUrl = _uiState.value.utilityBaseUrl
+        val utilityModel = _uiState.value.utilityModelName
+        val settings = currentSettings.value
+        if (settings.utilityAgentEnabled) {
+            if (settings.skillSuggestionEnabled) {
+                viewModelScope.launch {
+                    val skillNames = _uiState.value.availableSkills.map { it.name }
+                    val suggestion = utilityAgentRepo.suggestSkill(utilityBaseUrl, utilityModel, text, skillNames)
+                    if (suggestion != null) {
+                        _uiState.value = _uiState.value.copy(suggestedSkillName = suggestion)
+                    }
+                }
+            }
+            if (settings.conversationSimilarityEnabled) {
+                viewModelScope.launch {
+                    val conversations = repo.allConversations.first()
+                        .filter { it.id != currentConversationId }
+                        .take(20)
+                        .map { it.id to it.title }
+                    val similar = utilityAgentRepo.findSimilarConversations(utilityBaseUrl, utilityModel, text, conversations)
+                    if (similar.isNotEmpty()) {
+                        _uiState.value = _uiState.value.copy(similarConversationIds = similar)
+                    }
+                }
+            }
+        }
+
         sendJob = viewModelScope.launch {
             // Ensure a conversation entity exists; auto-title from the first user message.
             val convId = ensureConversation(server, userMsg)
@@ -292,7 +355,13 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
                     is ChatServiceEvent.TokenUsage ->
                         _uiState.value = _uiState.value.copy(
-                            tokensUsedLastTurn = event.promptTokens + event.generatedTokens
+                            tokensUsedLastTurn = event.promptTokens + event.generatedTokens,
+                            showCompressionButton = run {
+                                val ctxLen = _uiState.value.modelContextLength
+                                if (ctxLen != null && ctxLen > 0)
+                                    (event.promptTokens + event.generatedTokens).toFloat() / ctxLen >= 0.8f
+                                else false
+                            }
                         )
 
                     is ChatServiceEvent.TurnComplete -> {
@@ -316,17 +385,94 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                         if (finalMsg != null) repo.saveMessage(convId, finalMsg)
                         repo.touchConversation(convId)
 
-                        // Generate a title from the first user message after the first turn.
-                        if (!titleGenerated) {
+                        // Post-turn utility agent tasks (fire-and-forget)
+                        val postUtilityBase = _uiState.value.utilityBaseUrl
+                        val postUtilityModel = _uiState.value.utilityModelName
+                        val postSettings = settingsRepo.settings.first()
+                        if (postSettings.utilityAgentEnabled) {
+                            val assistantSnippet = finalMsg?.content?.take(200) ?: ""
+                            val exchange = buildString {
+                                append("User: ${userMsg.content.take(400)}")
+                                if (assistantSnippet.isNotBlank()) {
+                                    append("\nAssistant: $assistantSnippet")
+                                }
+                            }
+
+                            // Title generation (replaces the old ollamaRepo.generateTitle path)
+                            if (!titleGenerated && postSettings.titleGenerationEnabled) {
+                                titleGenerated = true
+                                viewModelScope.launch {
+                                    val generated = utilityAgentRepo.generateTitle(
+                                        postUtilityBase, postUtilityModel,
+                                        userMsg.content, assistantSnippet
+                                    )
+                                    if (!generated.isNullOrBlank()) {
+                                        repo.updateTitle(convId, generated)
+                                    }
+                                }
+                            } else if (!titleGenerated) {
+                                // Fallback: use original title logic
+                                titleGenerated = true
+                                val server = currentServer
+                                val firstUserContent = userMsg.content
+                                if (server != null) {
+                                    viewModelScope.launch {
+                                        val generated = ollamaRepo.generateTitle(
+                                            server.baseUrl, currentModel, firstUserContent
+                                        )
+                                        if (!generated.isNullOrBlank()) {
+                                            repo.updateTitle(convId, generated)
+                                        }
+                                    }
+                                }
+                            }
+
+                            // Auto-tagging
+                            if (postSettings.autoTaggingEnabled) {
+                                viewModelScope.launch {
+                                    val tags = utilityAgentRepo.generateTags(
+                                        postUtilityBase, postUtilityModel, exchange
+                                    )
+                                    if (tags.isNotEmpty()) {
+                                        app.database.conversationDao().updateTags(convId, tags.joinToString(","))
+                                    }
+                                }
+                            }
+
+                            // Project memory extraction
+                            val projectId = _uiState.value.currentProjectId
+                            if (postSettings.projectMemoryEnabled && projectId != null) {
+                                viewModelScope.launch {
+                                    val memories = utilityAgentRepo.extractMemories(
+                                        postUtilityBase, postUtilityModel, exchange
+                                    )
+                                    memories.forEach { fact ->
+                                        app.database.projectMemoryDao().insert(
+                                            com.ongrid.app.data.local.ProjectMemoryEntity(
+                                                projectId = projectId,
+                                                content = fact,
+                                                sourceConversationId = convId
+                                            )
+                                        )
+                                    }
+                                    if (memories.isNotEmpty()) {
+                                        loadProjectMemories(projectId)
+                                    }
+                                }
+                            }
+                        } else if (!titleGenerated) {
+                            // Utility agent disabled — fall back to original title logic
                             titleGenerated = true
                             val server = currentServer
                             val firstUserContent = userMsg.content
                             if (server != null) {
-                                val generated = ollamaRepo.generateTitle(
-                                    server.baseUrl, currentModel, firstUserContent
-                                )
-                                if (!generated.isNullOrBlank()) {
-                                    repo.updateTitle(convId, generated)
+                                viewModelScope.launch {
+                                    val generated = ollamaRepo.generateTitle(
+                                        server.baseUrl, currentModel, firstUserContent
+                                    )
+                                    if (!generated.isNullOrBlank()) {
+                                        repo.updateTitle(convId, generated)
+                                    }
                                 }
                             }
                         }
@@ -398,6 +544,102 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         )
     }
 
+    /** Dismiss the utility-agent skill suggestion without activating it. */
+    fun dismissSuggestedSkill() {
+        _uiState.value = _uiState.value.copy(suggestedSkillName = null)
+    }
+
+    /** Dismiss the similar-conversations banner. */
+    fun dismissSimilarConversations() {
+        _uiState.value = _uiState.value.copy(similarConversationIds = emptyList())
+    }
+
+    // ── Project association ───────────────────────────────────────────────────
+
+    /**
+     * Associate (or disassociate) this conversation with a project.
+     * Persists to Room and loads project memories into state.
+     */
+    fun setProjectForConversation(projectId: String?) {
+        val convId = currentConversationId ?: return
+        _uiState.value = _uiState.value.copy(currentProjectId = projectId)
+        viewModelScope.launch {
+            repo.assignToProject(convId, projectId)
+            if (projectId != null) {
+                loadProjectMemories(projectId)
+            } else {
+                _uiState.value = _uiState.value.copy(projectMemories = emptyList())
+            }
+        }
+    }
+
+    private suspend fun loadProjectMemories(projectId: String) {
+        val memories = app.database.projectMemoryDao().memoriesForProjectOnce(projectId)
+        _uiState.value = _uiState.value.copy(projectMemories = memories)
+    }
+
+    /**
+     * Create a new project with the given name and immediately assign this conversation to it.
+     * Returns the created ProjectEntity.
+     */
+    suspend fun createProjectAndAssign(name: String): com.ongrid.app.data.local.ProjectEntity {
+        val project = repo.createProject(name)
+        setProjectForConversation(project.id)
+        return project
+    }
+
+    // ── Context compression ───────────────────────────────────────────────────
+
+    /**
+     * Summarise older messages into a single compact system message to free up context space.
+     * Keeps the most recent 6 turns (12 messages) intact.
+     */
+    fun compressContext() {
+        viewModelScope.launch {
+            val toCompress = _messages.value
+                .filter { !it.isStreaming && !it.isSkill && it.role != MessageRole.SYSTEM }
+                .dropLast(12)
+            if (toCompress.isEmpty()) return@launch
+
+            val ollamaMessages = toCompress.map { msg ->
+                OllamaChatMessage(
+                    role = msg.role.name.lowercase(),
+                    content = msg.content
+                )
+            }
+            val summary = utilityAgentRepo.summariseMessages(
+                _uiState.value.utilityBaseUrl,
+                _uiState.value.utilityModelName,
+                ollamaMessages
+            ) ?: return@launch
+
+            val summaryMsg = ChatMessage(
+                role = MessageRole.SYSTEM,
+                content = "Summary of earlier conversation: $summary",
+                isSkill = true,
+                skillName = "Context Summary"
+            )
+            _messages.value = listOf(summaryMsg) + _messages.value.drop(toCompress.size)
+            _uiState.value = _uiState.value.copy(showCompressionButton = false)
+        }
+    }
+
+    // ── Utility model resolution ──────────────────────────────────────────────
+
+    /**
+     * Reads utility model settings and resolves the effective base URL and model name,
+     * falling back to the current conversation server/model when the setting is empty.
+     */
+    private suspend fun resolveUtilityModel() {
+        val s = settingsRepo.settings.first()
+        val effectiveHost = s.utilityModelHost.ifBlank { currentServer?.baseUrl ?: "" }
+        val effectiveModel = s.utilityModelName.ifBlank { currentModel }
+        _uiState.value = _uiState.value.copy(
+            utilityBaseUrl = effectiveHost,
+            utilityModelName = effectiveModel
+        )
+    }
+
     // ── Private helpers ───────────────────────────────────────────────────────
 
     private suspend fun ensureConversation(server: OllamaServer, firstUserMsg: ChatMessage): String {
@@ -410,7 +652,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             serverPort = server.port,
             modelName = currentModel,
             title = title,
-            thinkingEnabled = _uiState.value.thinkingEnabled
+            thinkingEnabled = _uiState.value.thinkingEnabled,
+            projectId = _uiState.value.currentProjectId
         )
         currentConversationId = entity.id
         // Persist the model choice as lastUsed so the next "New Chat" uses it directly.
@@ -420,16 +663,29 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun buildOllamaHistory(): List<OllamaChatMessage> {
         val all = _messages.value.filter { !it.isStreaming }
-        // Order: main system messages → skill system messages → conversation messages
+        // Order: main system messages → project memory message → skill system messages → conversation messages
         val mainSystem = all.filter { it.role == MessageRole.SYSTEM && !it.isSkill }
         val skillSystem = all.filter { it.role == MessageRole.SYSTEM && it.isSkill }
         val conversation = all.filter { it.role != MessageRole.SYSTEM }
-        return (mainSystem + skillSystem + conversation).map { msg ->
-            OllamaChatMessage(
-                role = msg.role.name.lowercase(),
-                content = msg.content
+
+        val projectMemories = _uiState.value.projectMemories
+        val memoryMessages = if (projectMemories.isNotEmpty()) {
+            val bullet = projectMemories.joinToString("\n") { "• ${it.content}" }
+            listOf(
+                OllamaChatMessage(
+                    role = "system",
+                    content = "Memories from previous conversations in this project:\n$bullet"
+                )
             )
-        }
+        } else emptyList()
+
+        return (mainSystem.map { msg ->
+            OllamaChatMessage(role = msg.role.name.lowercase(), content = msg.content)
+        } + memoryMessages + skillSystem.map { msg ->
+            OllamaChatMessage(role = msg.role.name.lowercase(), content = msg.content)
+        } + conversation.map { msg ->
+            OllamaChatMessage(role = msg.role.name.lowercase(), content = msg.content)
+        })
     }
 
     private fun updateStreamingMessage(id: String, content: String) {

@@ -31,4 +31,10 @@ interface ConversationDao {
 
     @Query("UPDATE conversations SET thinkingEnabled = :thinkingEnabled WHERE id = :id")
     suspend fun updateThinkingEnabled(id: String, thinkingEnabled: Boolean)
+
+    @Query("UPDATE conversations SET tags = :tags WHERE id = :id")
+    suspend fun updateTags(id: String, tags: String)
+
+    @Query("SELECT * FROM conversations WHERE ',' || tags || ',' LIKE '%,' || :tag || ',%' ORDER BY updatedAt DESC")
+    fun getByTag(tag: String): Flow<List<ConversationEntity>>
 }

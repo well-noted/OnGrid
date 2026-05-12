@@ -27,5 +27,6 @@ data class ConversationEntity(
     val modelName: String,
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis(),
-    val thinkingEnabled: Boolean = false
+    val thinkingEnabled: Boolean = false,
+    val tags: String = ""
 )

@@ -13,11 +13,14 @@ import com.ongrid.app.data.network.NetworkScanner
 import com.ongrid.app.data.network.WebSearchApi
 import com.ongrid.app.data.local.MIGRATION_3_4
 import com.ongrid.app.data.local.MIGRATION_4_5
+import com.ongrid.app.data.local.MIGRATION_5_6
 import com.ongrid.app.data.repository.ConversationRepository
 import com.ongrid.app.data.repository.McpRepository
 import com.ongrid.app.data.repository.OllamaRepository
 import com.ongrid.app.data.repository.ServerRepository
+import com.ongrid.app.data.repository.SettingsRepository
 import com.ongrid.app.data.repository.SkillRepository
+import com.ongrid.app.data.repository.UtilityAgentRepository
 import com.ongrid.app.data.repository.WebSearchRepository
 import kotlinx.coroutines.channels.Channel
 import okhttp3.OkHttpClient
@@ -98,13 +101,15 @@ class OnGridApplication : Application() {
 
     val database: AppDatabase by lazy {
         Room.databaseBuilder(this, AppDatabase::class.java, "ongrid.db")
-            .addMigrations(MIGRATION_3_4, MIGRATION_4_5)
+            .addMigrations(MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
             .fallbackToDestructiveMigration()
             .build()
     }
     val conversationRepository: ConversationRepository by lazy { ConversationRepository(database) }
     val serverRepository: ServerRepository by lazy { ServerRepository(database, this) }
     val skillRepository: SkillRepository by lazy { SkillRepository(database.skillDao()) }
+    val settingsRepository: SettingsRepository by lazy { SettingsRepository(this) }
+    val utilityAgentRepository: UtilityAgentRepository by lazy { UtilityAgentRepository(ollamaApi) }
 
     /** Set by [ChatViewModel] before starting [ChatForegroundService]; consumed by the service. */
     @Volatile var pendingChatRequest: PendingChatRequest? = null

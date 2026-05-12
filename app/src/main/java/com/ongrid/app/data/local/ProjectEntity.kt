@@ -8,5 +8,6 @@ import java.util.UUID
 data class ProjectEntity(
     @PrimaryKey val id: String = UUID.randomUUID().toString(),
     val name: String,
+    val description: String = "",
     val createdAt: Long = System.currentTimeMillis()
 )
