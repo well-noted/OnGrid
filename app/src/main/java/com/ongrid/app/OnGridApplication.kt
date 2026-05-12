@@ -12,6 +12,7 @@ import com.ongrid.app.data.network.McpApi
 import com.ongrid.app.data.network.NetworkScanner
 import com.ongrid.app.data.network.WebSearchApi
 import com.ongrid.app.data.local.MIGRATION_3_4
+import com.ongrid.app.data.local.MIGRATION_4_5
 import com.ongrid.app.data.repository.ConversationRepository
 import com.ongrid.app.data.repository.McpRepository
 import com.ongrid.app.data.repository.OllamaRepository
@@ -97,7 +98,7 @@ class OnGridApplication : Application() {
 
     val database: AppDatabase by lazy {
         Room.databaseBuilder(this, AppDatabase::class.java, "ongrid.db")
-            .addMigrations(MIGRATION_3_4)
+            .addMigrations(MIGRATION_3_4, MIGRATION_4_5)
             .fallbackToDestructiveMigration()
             .build()
     }

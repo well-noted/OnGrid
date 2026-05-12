@@ -35,17 +35,23 @@ class ConversationRepository(private val db: AppDatabase) {
         serverPort: Int,
         modelName: String,
         projectId: String? = null,
-        title: String = "New Conversation"
+        title: String = "New Conversation",
+        thinkingEnabled: Boolean = false
     ): ConversationEntity {
         val conv = ConversationEntity(
             serverHost = serverHost,
             serverPort = serverPort,
             modelName = modelName,
             projectId = projectId,
-            title = title
+            title = title,
+            thinkingEnabled = thinkingEnabled
         )
         db.conversationDao().insert(conv)
         return conv
+    }
+
+    suspend fun updateThinkingEnabled(id: String, thinkingEnabled: Boolean) {
+        db.conversationDao().updateThinkingEnabled(id, thinkingEnabled)
     }
 
     suspend fun updateTitle(id: String, title: String) {

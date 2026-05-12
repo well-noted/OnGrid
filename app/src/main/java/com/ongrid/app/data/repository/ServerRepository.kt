@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
@@ -20,6 +21,7 @@ private val Context.serverDataStore: DataStore<Preferences> by preferencesDataSt
 private val LAST_USED_HOST = stringPreferencesKey("last_used_host")
 private val LAST_USED_PORT = intPreferencesKey("last_used_port")
 private val LAST_USED_MODEL = stringPreferencesKey("last_used_model")
+private val DEFAULT_THINKING_ON = booleanPreferencesKey("default_thinking_on")
 
 data class LastUsedPrefs(
     val serverHost: String? = null,
@@ -68,6 +70,16 @@ class ServerRepository(
             prefs[LAST_USED_HOST] = serverHost
             prefs[LAST_USED_PORT] = serverPort
             prefs[LAST_USED_MODEL] = modelName
+        }
+    }
+
+    val defaultThinkingOn: Flow<Boolean> = context.serverDataStore.data.map { prefs ->
+        prefs[DEFAULT_THINKING_ON] ?: false
+    }
+
+    suspend fun setDefaultThinkingOn(enabled: Boolean) {
+        context.serverDataStore.edit { prefs ->
+            prefs[DEFAULT_THINKING_ON] = enabled
         }
     }
 }

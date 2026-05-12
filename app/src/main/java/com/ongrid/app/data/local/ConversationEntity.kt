@@ -26,5 +26,6 @@ data class ConversationEntity(
     val serverPort: Int,
     val modelName: String,
     val createdAt: Long = System.currentTimeMillis(),
-    val updatedAt: Long = System.currentTimeMillis()
+    val updatedAt: Long = System.currentTimeMillis(),
+    val thinkingEnabled: Boolean = false
 )
