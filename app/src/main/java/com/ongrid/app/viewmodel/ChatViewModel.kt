@@ -15,6 +15,7 @@ import com.ongrid.app.data.model.OllamaChatRequest
 import com.ongrid.app.data.model.OllamaRequestOptions
 import com.ongrid.app.data.model.OllamaServer
 import com.ongrid.app.data.model.OllamaTool
+import com.ongrid.app.data.local.SkillEntity
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -41,7 +42,13 @@ data class ChatUiState(
     /** Maximum context length the model supports (null if unknown). */
     val modelContextLength: Int? = null,
     /** Total tokens used in the last completed turn (prompt + generated). */
-    val tokensUsedLastTurn: Int = 0
+    val tokensUsedLastTurn: Int = 0,
+    /** All skills available to activate in this session. */
+    val availableSkills: List<SkillEntity> = emptyList(),
+    /** IDs of skills currently injected into the conversation. */
+    val activeSkillIds: Set<String> = emptySet(),
+    /** True when the skill picker sheet should be shown. */
+    val showSkillPicker: Boolean = false
 )
 
 class ChatViewModel(application: Application) : AndroidViewModel(application) {
@@ -68,6 +75,15 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     /** True until the first assistant response has been fully persisted. */
     private var titleGenerated: Boolean = false
+
+    init {
+        // Keep availableSkills in uiState in sync with the database.
+        viewModelScope.launch {
+            app.skillRepository.allSkills.collect { skills ->
+                _uiState.value = _uiState.value.copy(availableSkills = skills)
+            }
+        }
+    }
 
     /**
      * All saved servers and their model lists — used by the in-chat model picker.
@@ -316,8 +332,45 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     /** Clear all messages for the current conversation (in memory and on disk). */
     fun clearMessages() {
         _messages.value = emptyList()
+        _uiState.value = _uiState.value.copy(activeSkillIds = emptySet())
         val convId = currentConversationId ?: return
         viewModelScope.launch { repo.clearMessages(convId) }
+    }
+
+    // ── Skill management ──────────────────────────────────────────────────────
+
+    /** Called when the user types '/' at the start of the input field. */
+    fun showSkillPicker() {
+        _uiState.value = _uiState.value.copy(showSkillPicker = true)
+    }
+
+    fun dismissSkillPicker() {
+        _uiState.value = _uiState.value.copy(showSkillPicker = false)
+    }
+
+    /** Activate a skill: inject its content into the conversation as a system message. */
+    fun activateSkill(skill: SkillEntity) {
+        if (skill.id in _uiState.value.activeSkillIds) return
+        val skillMsg = ChatMessage(
+            role = MessageRole.SYSTEM,
+            content = skill.content,
+            isSkill = true,
+            skillName = skill.name
+        )
+        _messages.value = _messages.value + skillMsg
+        _uiState.value = _uiState.value.copy(
+            activeSkillIds = _uiState.value.activeSkillIds + skill.id,
+            showSkillPicker = false
+        )
+    }
+
+    /** Remove an active skill from the conversation. */
+    fun deactivateSkill(skillId: String) {
+        val skillName = _uiState.value.availableSkills.find { s -> s.id == skillId }?.name
+        _messages.value = _messages.value.filter { !(it.isSkill && it.skillName == skillName) }
+        _uiState.value = _uiState.value.copy(
+            activeSkillIds = _uiState.value.activeSkillIds - skillId
+        )
     }
 
     // ── Private helpers ───────────────────────────────────────────────────────
@@ -339,15 +392,19 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         return entity.id
     }
 
-    private fun buildOllamaHistory(): List<OllamaChatMessage> =
-        _messages.value
-            .filter { !it.isStreaming }
-            .map { msg ->
-                OllamaChatMessage(
-                    role = msg.role.name.lowercase(),
-                    content = msg.content
-                )
-            }
+    private fun buildOllamaHistory(): List<OllamaChatMessage> {
+        val all = _messages.value.filter { !it.isStreaming }
+        // Order: main system messages → skill system messages → conversation messages
+        val mainSystem = all.filter { it.role == MessageRole.SYSTEM && !it.isSkill }
+        val skillSystem = all.filter { it.role == MessageRole.SYSTEM && it.isSkill }
+        val conversation = all.filter { it.role != MessageRole.SYSTEM }
+        return (mainSystem + skillSystem + conversation).map { msg ->
+            OllamaChatMessage(
+                role = msg.role.name.lowercase(),
+                content = msg.content
+            )
+        }
+    }
 
     private fun updateStreamingMessage(id: String, content: String) {
         _messages.value = _messages.value.map { msg ->

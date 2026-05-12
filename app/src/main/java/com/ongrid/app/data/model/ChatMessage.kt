@@ -12,7 +12,11 @@ data class ChatMessage(
     val isError: Boolean = false,
     /** Reasoning/thinking content produced by the model before its final answer. */
     val thinkingContent: String? = null,
-    val timestamp: Long = System.currentTimeMillis()
+    val timestamp: Long = System.currentTimeMillis(),
+    /** True when this message was injected by an active skill. */
+    val isSkill: Boolean = false,
+    /** The display name of the skill that generated this message. */
+    val skillName: String? = null
 )
 
 data class ToolCall(

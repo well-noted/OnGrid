@@ -3,6 +3,7 @@ package com.ongrid.app.ui.screens
 import androidx.compose.foundation.background
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -28,7 +29,9 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Build
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.filled.Send
@@ -37,6 +40,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -83,6 +87,7 @@ import androidx.compose.ui.unit.dp
 import com.ongrid.app.data.model.ChatMessage
 import com.ongrid.app.data.model.MessageRole
 import com.ongrid.app.ui.theme.AssistantBubble
+import com.ongrid.app.ui.theme.SkillBubble
 import com.ongrid.app.ui.theme.ToolBubble
 import com.ongrid.app.ui.theme.ToolErrorBubble
 import com.ongrid.app.ui.theme.UserBubble
@@ -107,6 +112,7 @@ fun ChatScreen(
     val toolSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var showThinkingSheet by remember { mutableStateOf(false) }
     val thinkingSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val skillPickerSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val scope = rememberCoroutineScope()
 
     // Auto-scroll to bottom when new messages arrive
@@ -272,6 +278,41 @@ fun ChatScreen(
                 }
             }
 
+            // Active skill chips — shown just above the input bar
+            if (uiState.activeSkillIds.isNotEmpty()) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState())
+                        .padding(horizontal = 8.dp, vertical = 2.dp),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    val activeSkills = uiState.availableSkills.filter { it.id in uiState.activeSkillIds }
+                    activeSkills.forEach { skill ->
+                        FilterChip(
+                            selected = true,
+                            onClick = { viewModel.deactivateSkill(skill.id) },
+                            label = { Text(skill.name, style = MaterialTheme.typography.labelSmall) },
+                            leadingIcon = {
+                                Icon(
+                                    Icons.Default.AutoAwesome,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(14.dp)
+                                )
+                            },
+                            trailingIcon = {
+                                Icon(
+                                    Icons.Default.Close,
+                                    contentDescription = "Remove ${skill.name} skill",
+                                    modifier = Modifier.size(14.dp)
+                                )
+                            }
+                        )
+                    }
+                }
+            }
+
             // Input area
             Surface(
                 modifier = Modifier.fillMaxWidth(),
@@ -306,8 +347,15 @@ fun ChatScreen(
                     ) {
                     OutlinedTextField(
                         value = inputText,
-                        onValueChange = { inputText = it },
-                        placeholder = { Text("Message…") },
+                        onValueChange = { newValue ->
+                            inputText = newValue
+                            if (newValue == "/") {
+                                viewModel.showSkillPicker()
+                            } else if (uiState.showSkillPicker) {
+                                viewModel.dismissSkillPicker()
+                            }
+                        },
+                        placeholder = { Text("Message… (type / for skills)") },
                         modifier = Modifier.weight(1f),
                         maxLines = 5,
                         keyboardOptions = KeyboardOptions(
@@ -322,6 +370,20 @@ fun ChatScreen(
                         }),
                         shape = RoundedCornerShape(24.dp)
                     )
+                    // Skill picker button
+                    IconButton(
+                        onClick = { viewModel.showSkillPicker() },
+                        modifier = Modifier.size(48.dp)
+                    ) {
+                        Icon(
+                            Icons.Default.AutoAwesome,
+                            contentDescription = "Add skill",
+                            tint = if (uiState.activeSkillIds.isNotEmpty())
+                                MaterialTheme.colorScheme.primary
+                            else
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                     IconButton(
                         onClick = {
                             if (uiState.isLoading) {
@@ -354,6 +416,97 @@ fun ChatScreen(
                 }
                 }
             }
+        }
+    }
+
+    // ── Skill picker sheet ────────────────────────────────────────────────────
+    if (uiState.showSkillPicker) {
+        ModalBottomSheet(
+            onDismissRequest = { viewModel.dismissSkillPicker() },
+            sheetState = skillPickerSheetState
+        ) {
+            Text(
+                "Activate a Skill",
+                style = MaterialTheme.typography.titleMedium,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+            )
+            HorizontalDivider()
+            if (uiState.availableSkills.isEmpty()) {
+                Text(
+                    "No skills imported yet. Add skills from Settings.",
+                    modifier = Modifier.padding(16.dp),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            } else {
+                Column(
+                    modifier = Modifier
+                        .heightIn(max = 400.dp)
+                        .verticalScroll(rememberScrollState())
+                ) {
+                    uiState.availableSkills.forEach { skill ->
+                        val isActive = skill.id in uiState.activeSkillIds
+                        Card(
+                            onClick = {
+                                if (!isActive) {
+                                    viewModel.activateSkill(skill)
+                                    inputText = ""
+                                }
+                            },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 8.dp, vertical = 4.dp),
+                            colors = CardDefaults.cardColors(
+                                containerColor = if (isActive)
+                                    MaterialTheme.colorScheme.primaryContainer
+                                else
+                                    MaterialTheme.colorScheme.surfaceVariant
+                            )
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    Icons.Default.AutoAwesome,
+                                    contentDescription = null,
+                                    modifier = Modifier
+                                        .size(20.dp)
+                                        .padding(end = 4.dp),
+                                    tint = if (isActive)
+                                        MaterialTheme.colorScheme.primary
+                                    else
+                                        MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Spacer(Modifier.width(8.dp))
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        skill.name,
+                                        style = MaterialTheme.typography.bodyMedium
+                                    )
+                                    if (skill.description.isNotBlank()) {
+                                        Text(
+                                            skill.description,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            maxLines = 2
+                                        )
+                                    }
+                                }
+                                if (isActive) {
+                                    Text(
+                                        "Active",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                }
+                            }
+                        }
+                    }
+                    Spacer(Modifier.height(16.dp))
+                }
+            }
+            Spacer(Modifier.height(16.dp))
         }
     }
 
@@ -526,6 +679,41 @@ fun ChatScreen(
 private fun MessageBubble(message: ChatMessage) {
     val isUser = message.role == MessageRole.USER
     val isTool = message.role == MessageRole.TOOL
+    val isSkill = message.isSkill
+
+    // Skill messages are rendered as a compact banner, not a full bubble.
+    if (isSkill) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.Center
+        ) {
+            Surface(
+                shape = RoundedCornerShape(8.dp),
+                color = SkillBubble.copy(alpha = 0.85f),
+                modifier = Modifier.padding(vertical = 2.dp)
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Icon(
+                        Icons.Default.AutoAwesome,
+                        contentDescription = null,
+                        tint = Color.White,
+                        modifier = Modifier.size(14.dp)
+                    )
+                    Text(
+                        text = "Skill active: ${message.skillName ?: "Unknown"}",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = Color.White
+                    )
+                }
+            }
+        }
+        return
+    }
+
     var toolExpanded by remember { mutableStateOf(false) }
     var thinkingExpanded by remember { mutableStateOf(false) }
     val clipboardManager = LocalClipboardManager.current
