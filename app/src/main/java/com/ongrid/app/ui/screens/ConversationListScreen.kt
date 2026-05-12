@@ -10,15 +10,18 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.ArrowForward
 import androidx.compose.material.icons.filled.Chat
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.MenuBook
 import androidx.compose.material.icons.filled.MoreVert
@@ -88,7 +91,9 @@ fun ConversationListScreen(
     var showNewProjectDialog by remember { mutableStateOf(false) }
     var newProjectName by remember { mutableStateOf("") }
     var showModelPicker by remember { mutableStateOf(false) }
+    var showProjectsSheet by remember { mutableStateOf(false) }
     val bottomSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val projectsSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val scope = rememberCoroutineScope()
 
     // Build server+models list for the picker (only relevant when state is Ready)
@@ -109,8 +114,8 @@ fun ConversationListScreen(
                     IconButton(onClick = onOpenSettings) {
                         Icon(Icons.Default.MenuBook, contentDescription = "Skills & Settings")
                     }
-                    IconButton(onClick = { showNewProjectDialog = true }) {
-                        Icon(Icons.Default.Add, contentDescription = "New Project")
+                    IconButton(onClick = { showProjectsSheet = true }) {
+                        Icon(Icons.Default.FolderOpen, contentDescription = "Projects")
                     }
                 }
             )
@@ -139,28 +144,22 @@ fun ConversationListScreen(
                 .fillMaxSize()
                 .padding(innerPadding)
         ) {
-            // Project filter chips
-            if (projects.isNotEmpty()) {
-                LazyRow(
-                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    item {
-                        FilterChip(
-                            selected = selectedProjectId == null,
-                            onClick = { viewModel.selectProject(null) },
-                            label = { Text("All") }
-                        )
-                    }
-                    items(projects, key = { it.id }) { project ->
-                        ProjectChip(
-                            project = project,
-                            selected = selectedProjectId == project.id,
-                            onSelect = { viewModel.selectProject(project.id) },
-                            onManage = { onOpenProject(project.id) },
-                            onDelete = { viewModel.deleteProject(project.id) }
-                        )
-                    }
+            // Active project filter
+            val activeProject = projects.find { it.id == selectedProjectId }
+            if (activeProject != null) {
+                Row(modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) {
+                    FilterChip(
+                        selected = true,
+                        onClick = { viewModel.selectProject(null) },
+                        label = { Text(activeProject.name) },
+                        trailingIcon = {
+                            Icon(
+                                Icons.Default.Close,
+                                contentDescription = "Clear filter",
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
+                    )
                 }
             }
 
@@ -211,6 +210,87 @@ fun ConversationListScreen(
                     }
                 }
             }
+        }
+    }
+
+    // ── Projects sheet ────────────────────────────────────────────────────────
+    if (showProjectsSheet) {
+        ModalBottomSheet(
+            onDismissRequest = {
+                scope.launch { projectsSheetState.hide() }.invokeOnCompletion { showProjectsSheet = false }
+            },
+            sheetState = projectsSheetState
+        ) {
+            Text(
+                "Projects",
+                style = MaterialTheme.typography.titleMedium,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+            )
+            HorizontalDivider()
+            // "All" row
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable {
+                        viewModel.selectProject(null)
+                        scope.launch { projectsSheetState.hide() }.invokeOnCompletion { showProjectsSheet = false }
+                    }
+                    .padding(horizontal = 16.dp, vertical = 14.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(Icons.Default.Chat, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                Spacer(Modifier.width(12.dp))
+                Text("All conversations", modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge)
+                if (selectedProjectId == null) {
+                    Icon(Icons.Default.Check, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                }
+            }
+            // Each project
+            projects.forEach { project ->
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable {
+                            viewModel.selectProject(project.id)
+                            scope.launch { projectsSheetState.hide() }.invokeOnCompletion { showProjectsSheet = false }
+                        }
+                        .padding(start = 16.dp, top = 4.dp, bottom = 4.dp, end = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(Icons.Default.FolderOpen, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Spacer(Modifier.width(12.dp))
+                    Text(project.name, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge)
+                    if (selectedProjectId == project.id) {
+                        Icon(Icons.Default.Check, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                        Spacer(Modifier.width(4.dp))
+                    }
+                    IconButton(onClick = {
+                        scope.launch { projectsSheetState.hide() }.invokeOnCompletion {
+                            showProjectsSheet = false
+                            onOpenProject(project.id)
+                        }
+                    }) {
+                        Icon(Icons.Default.ArrowForward, contentDescription = "Open project")
+                    }
+                }
+            }
+            if (projects.isNotEmpty()) HorizontalDivider(modifier = Modifier.padding(top = 4.dp))
+            TextButton(
+                onClick = {
+                    scope.launch { projectsSheetState.hide() }.invokeOnCompletion {
+                        showProjectsSheet = false
+                        showNewProjectDialog = true
+                    }
+                },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 8.dp, vertical = 4.dp)
+            ) {
+                Icon(Icons.Default.Add, contentDescription = null)
+                Spacer(Modifier.width(8.dp))
+                Text("New project")
+            }
+            Spacer(Modifier.height(16.dp))
         }
     }
 
@@ -337,49 +417,6 @@ private fun ModelPickerBottomSheet(
             }
         }
         Spacer(Modifier.height(16.dp))
-    }
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun ProjectChip(
-    project: ProjectEntity,
-    selected: Boolean,
-    onSelect: () -> Unit,
-    onManage: () -> Unit,
-    onDelete: () -> Unit
-) {
-    var showMenu by remember { mutableStateOf(false) }
-
-    Box {
-        FilterChip(
-            selected = selected,
-            onClick = onSelect,
-            label = { Text(project.name) },
-            trailingIcon = {
-                IconButton(onClick = { showMenu = true }, modifier = Modifier.width(20.dp)) {
-                    Icon(Icons.Default.MoreVert, contentDescription = "Project options")
-                }
-            }
-        )
-        DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
-            DropdownMenuItem(
-                text = { Text("Manage project") },
-                leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null) },
-                onClick = {
-                    showMenu = false
-                    onManage()
-                }
-            )
-            DropdownMenuItem(
-                text = { Text("Delete project") },
-                leadingIcon = { Icon(Icons.Default.Delete, contentDescription = null) },
-                onClick = {
-                    showMenu = false
-                    onDelete()
-                }
-            )
-        }
     }
 }
 
