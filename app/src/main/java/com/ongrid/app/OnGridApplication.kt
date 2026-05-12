@@ -53,6 +53,8 @@ sealed class ChatServiceEvent {
         val error: String? = null,
         val thinkingContent: String? = null
     ) : ChatServiceEvent()
+    /** Token usage reported by the final streaming chunk (done = true). */
+    data class TokenUsage(val promptTokens: Int, val generatedTokens: Int) : ChatServiceEvent()
 }
 
 class OnGridApplication : Application() {

@@ -92,6 +92,8 @@ class ChatForegroundService : Service() {
                 val thinkingAccumulated = StringBuilder()
                 var toolCalls: List<OllamaToolCall> = emptyList()
                 var streamError: String? = null
+                var finalPromptTokens: Int? = null
+                var finalEvalTokens: Int? = null
 
                 try {
                     app.ollamaRepository.streamChat(pending.baseUrl, currentRequest)
@@ -114,6 +116,10 @@ class ChatForegroundService : Service() {
                             chunk.message?.tool_calls?.let { calls ->
                                 if (calls.isNotEmpty()) toolCalls = calls
                             }
+                            if (chunk.done) {
+                                finalPromptTokens = chunk.promptEvalCount
+                                finalEvalTokens = chunk.evalCount
+                            }
                         }
                 } catch (e: Exception) {
                     streamError = e.message
@@ -128,6 +134,13 @@ class ChatForegroundService : Service() {
 
                 // No tool calls → turn is done
                 if (toolCalls.isEmpty()) {
+                    val promptTokens = finalPromptTokens
+                    val evalTokens = finalEvalTokens
+                    if (promptTokens != null && evalTokens != null) {
+                        app.chatServiceChannel.send(
+                            ChatServiceEvent.TokenUsage(promptTokens, evalTokens)
+                        )
+                    }
                     app.chatServiceChannel.send(
                         ChatServiceEvent.TurnComplete(
                             currentMsgId,

@@ -33,6 +33,14 @@ class OllamaRepository(private val api: OllamaApi) {
             api.showModel(baseUrl, modelName)?.capabilities?.contains("thinking") == true
         }
 
+    /**
+     * Returns the model's maximum context length from /api/show, or null if unavailable.
+     */
+    suspend fun detectContextLength(baseUrl: String, modelName: String): Int? =
+        withContext(Dispatchers.IO) {
+            api.showModel(baseUrl, modelName)?.contextLength
+        }
+
     fun streamChat(
         baseUrl: String,
         request: com.ongrid.app.data.model.OllamaChatRequest

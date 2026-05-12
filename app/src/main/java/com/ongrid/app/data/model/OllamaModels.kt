@@ -40,5 +40,13 @@ data class OllamaVersionResponse(
  * The `capabilities` list may include "completion", "tools", "thinking", etc.
  */
 data class OllamaShowResponse(
-    val capabilities: List<String> = emptyList()
-)
+    val capabilities: List<String> = emptyList(),
+    @SerializedName("model_info") val modelInfo: Map<String, Any> = emptyMap()
+) {
+    // model_info keys are architecture-prefixed, e.g. "llama.context_length",
+    // "qwen2.context_length". Gson deserialises JSON numbers as Double in Any maps.
+    val contextLength: Int?
+        get() = modelInfo.entries
+            .firstOrNull { it.key.endsWith(".context_length") }
+            ?.value?.let { (it as? Double)?.toInt() }
+}

@@ -26,7 +26,9 @@ data class ToolCall(
  */
 data class OllamaRequestOptions(
     @com.google.gson.annotations.SerializedName("thinking_budget")
-    val thinkingBudget: Int? = null
+    val thinkingBudget: Int? = null,
+    @com.google.gson.annotations.SerializedName("num_ctx")
+    val numCtx: Int? = null
 )
 
 // Ollama chat API request/response models
@@ -52,7 +54,9 @@ data class OllamaChatResponse(
     val model: String = "",
     val message: OllamaChatMessage? = null,
     val done: Boolean = false,
-    val done_reason: String? = null
+    val done_reason: String? = null,
+    @com.google.gson.annotations.SerializedName("prompt_eval_count") val promptEvalCount: Int? = null,
+    @com.google.gson.annotations.SerializedName("eval_count") val evalCount: Int? = null
 )
 
 data class OllamaTool(

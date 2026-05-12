@@ -37,7 +37,11 @@ data class ChatUiState(
     /** Thinking token budget sent to the model when thinking is enabled (0–32768). */
     val thinkingBudget: Int = 8192,
     /** Accumulated reasoning content streamed by the current (in-progress) turn. */
-    val streamingThinkingContent: String = ""
+    val streamingThinkingContent: String = "",
+    /** Maximum context length the model supports (null if unknown). */
+    val modelContextLength: Int? = null,
+    /** Total tokens used in the last completed turn (prompt + generated). */
+    val tokensUsedLastTurn: Int = 0
 )
 
 class ChatViewModel(application: Application) : AndroidViewModel(application) {
@@ -92,7 +96,9 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             disabledToolNames = emptySet(),
             supportsThinking = false,
             thinkingEnabled = false,
-            streamingThinkingContent = ""
+            streamingThinkingContent = "",
+            modelContextLength = null,
+            tokensUsedLastTurn = 0
         )
         checkThinkingSupport(server.baseUrl, modelName)
     }
@@ -120,7 +126,9 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         currentModel = modelName
         _uiState.value = _uiState.value.copy(
             supportsThinking = false,
-            thinkingEnabled = false
+            thinkingEnabled = false,
+            modelContextLength = null,
+            tokensUsedLastTurn = 0
         )
         checkThinkingSupport(currentServer!!.baseUrl, modelName)
         viewModelScope.launch {
@@ -189,6 +197,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         val tools = _uiState.value.availableTools
             .filter { it.function.name !in disabled }
             .takeIf { it.isNotEmpty() }
+        val contextLength = _uiState.value.modelContextLength
         val request = OllamaChatRequest(
             model = currentModel,
             messages = history,
@@ -196,7 +205,9 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             tools = tools,
             think = if (_uiState.value.thinkingEnabled) true else null,
             options = if (_uiState.value.thinkingEnabled)
-                OllamaRequestOptions(thinkingBudget = _uiState.value.thinkingBudget)
+                OllamaRequestOptions(thinkingBudget = _uiState.value.thinkingBudget, numCtx = contextLength)
+            else if (contextLength != null)
+                OllamaRequestOptions(numCtx = contextLength)
             else null
         )
 
@@ -237,6 +248,11 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                         _messages.value = _messages.value + event.message
                         repo.saveMessage(convId, event.message)
                     }
+
+                    is ChatServiceEvent.TokenUsage ->
+                        _uiState.value = _uiState.value.copy(
+                            tokensUsedLastTurn = event.promptTokens + event.generatedTokens
+                        )
 
                     is ChatServiceEvent.TurnComplete -> {
                         if (event.error != null) {
@@ -362,6 +378,10 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 supportsThinking = supported,
                 thinkingEnabled = if (!supported) false else _uiState.value.thinkingEnabled
             )
+        }
+        viewModelScope.launch {
+            val contextLength = ollamaRepo.detectContextLength(baseUrl, modelName)
+            _uiState.value = _uiState.value.copy(modelContextLength = contextLength)
         }
     }
 }

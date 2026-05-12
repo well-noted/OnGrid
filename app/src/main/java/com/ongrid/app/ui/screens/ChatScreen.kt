@@ -278,14 +278,32 @@ fun ChatScreen(
                 color = MaterialTheme.colorScheme.surface,
                 tonalElevation = 4.dp
             ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 12.dp, vertical = 8.dp)
-                        .navigationBarsPadding(),
-                    verticalAlignment = Alignment.Bottom,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
+                Column {
+                    // Token usage indicator — only shown when context length is known
+                    val contextLength = uiState.modelContextLength
+                    if (contextLength != null && uiState.tokensUsedLastTurn > 0) {
+                        val usageRatio = uiState.tokensUsedLastTurn.toFloat() / contextLength
+                        val usageColor = if (usageRatio >= 0.8f)
+                            MaterialTheme.colorScheme.error
+                        else
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        Text(
+                            text = "%,d / %,d tokens".format(uiState.tokensUsedLastTurn, contextLength),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = usageColor,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp, vertical = 2.dp)
+                        )
+                    }
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 8.dp)
+                            .navigationBarsPadding(),
+                        verticalAlignment = Alignment.Bottom,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
                     OutlinedTextField(
                         value = inputText,
                         onValueChange = { inputText = it },
@@ -333,6 +351,7 @@ fun ChatScreen(
                                 MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
+                }
                 }
             }
         }
