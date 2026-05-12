@@ -93,6 +93,9 @@ class ChatForegroundService : Service() {
         // Holds the plan bubble ID and live step list so the tool loop can update them.
         var planMsgId: String? = null
         var currentPlanSteps: MutableList<PlanStep> = mutableListOf()
+        // Tracks every (tool, args) fingerprint executed this turn so we can block the model
+        // from running the exact same call twice — the most common cause of infinite loops.
+        val executedFingerprints = mutableMapOf<String, String>() // fingerprint -> prior result
 
         try {
             while (true) {
@@ -227,10 +230,7 @@ class ChatForegroundService : Service() {
                     if (planAccumulated.isNotEmpty()) {
                         currentRequest = currentRequest.copy(
                             messages = currentRequest.messages +
-                                OllamaChatMessage(role = "assistant", content = planAccumulated.toString()),
-                            // Add mark_steps_complete to the tool list so the model can
-                            // check off steps as it works through them.
-                            tools = currentRequest.tools.orEmpty() + MARK_STEPS_COMPLETE_TOOL
+                                OllamaChatMessage(role = "assistant", content = planAccumulated.toString())
                         )
                     }
                 }
@@ -254,9 +254,29 @@ class ChatForegroundService : Service() {
                     val args = toolCall.function.arguments
                     val serverEntry = toolMap[funcName]
 
+                    // ---- Deduplication guard -------------------------------------------
+                    // If the model calls the exact same tool with the exact same arguments
+                    // again within this turn, block it immediately rather than re-executing.
+                    val fingerprint = "$funcName:${args.entries.sortedBy { it.key }.joinToString(",") { "${it.key}=${it.value}" }}"
+                    val priorResult = executedFingerprints[fingerprint]
+                    if (priorResult != null) {
+                        val dedupMsg = "[Duplicate call blocked] '$funcName' was already called " +
+                            "with these exact arguments this turn. Prior result: $priorResult " +
+                            "Do not call it again — use the result above and continue."
+                        val dedupBubble = ChatMessage(
+                            role = MessageRole.TOOL,
+                            content = dedupMsg,
+                            toolCallId = funcName,
+                            isError = true
+                        )
+                        app.chatServiceChannel.send(ChatServiceEvent.AppendMessage(dedupBubble))
+                        nextMessages += OllamaChatMessage(role = "tool", content = dedupMsg)
+                        anyToolFailed = true
+                        continue
+                    }
+
                     val (resultText, isError) = try {
                         val schema: McpInputSchema? = when {
-                            funcName == "mark_steps_complete" -> null
                             funcName == "web_search" -> app.webSearchRepository.tool.inputSchema
                             serverEntry != null -> serverEntry.second.inputSchema
                             else -> null
@@ -265,25 +285,6 @@ class ChatForegroundService : Service() {
                         if (validationError != null) {
                             validationError to true
                         } else when {
-                            funcName == "mark_steps_complete" -> {
-                                // Intercept plan step completions — update the UI, no MCP call.
-                                @Suppress("UNCHECKED_CAST")
-                                val indices = (args["step_numbers"] as? List<*>)
-                                    ?.mapNotNull { (it as? Number)?.toInt() }
-                                    ?: emptyList()
-                                val activePlanMsgId = planMsgId
-                                if (activePlanMsgId != null && indices.isNotEmpty()) {
-                                    val updated = currentPlanSteps.map { step ->
-                                        if (step.index in indices) step.copy(isDone = true) else step
-                                    }
-                                    currentPlanSteps = updated.toMutableList()
-                                    app.chatServiceChannel.send(
-                                        ChatServiceEvent.SetPlanSteps(activePlanMsgId, currentPlanSteps.toList())
-                                    )
-                                }
-                                val label = indices.joinToString(", ") { "step $it" }
-                                "Marked $label as complete. Continue to the next step." to false
-                            }
                             funcName == "web_search" -> {
                                 app.webSearchRepository.search(args) to false
                             }
@@ -307,13 +308,6 @@ class ChatForegroundService : Service() {
 
                     if (isError) anyToolFailed = true
 
-                    // mark_steps_complete is silent — don't pollute the conversation with a
-                    // tool-result bubble for a housekeeping call.
-                    if (funcName == "mark_steps_complete") {
-                        nextMessages += OllamaChatMessage(role = "tool", content = resultText)
-                        continue
-                    }
-
                     // Tell the ViewModel to append the tool-result bubble to the conversation
                     val toolResultMsg = ChatMessage(
                         role = MessageRole.TOOL,
@@ -324,6 +318,8 @@ class ChatForegroundService : Service() {
                     app.chatServiceChannel.send(ChatServiceEvent.AppendMessage(toolResultMsg))
 
                     nextMessages += OllamaChatMessage(role = "tool", content = resultText)
+                    // Record successful calls so duplicates can be blocked in later rounds.
+                    if (!isError) executedFingerprints[fingerprint] = resultText
                 }
 
                 // If any tool failed, inject a user nudge so the model retries with
@@ -332,31 +328,6 @@ class ChatForegroundService : Service() {
                     val retryPrompt = "One or more tool calls failed (see results above). " +
                         "Please retry the failed call(s) with corrected arguments."
                     nextMessages += OllamaChatMessage(role = "user", content = retryPrompt)
-                }
-
-                // ---- Plan-progress reminder -----------------------------------------------
-                // After every tool round, inject a concise summary of plan state so the model
-                // always knows which step to do next and cannot accidentally repeat or skip one.
-                // Steps are only advanced by explicit mark_steps_complete calls — we never
-                // assume success based on a tool having run.
-                if (currentPlanSteps.isNotEmpty()) {
-                    val nextIncomplete = currentPlanSteps.firstOrNull { !it.isDone }
-                    val reminder = buildString {
-                        appendLine("[Plan status]")
-                        currentPlanSteps.forEach { step ->
-                            val marker = if (step.isDone) "[done]" else "[ ]"
-                            appendLine("$marker Step ${step.index}: ${step.text}")
-                        }
-                        if (nextIncomplete != null) {
-                            append("Step ${nextIncomplete.index} is not yet confirmed complete. " +
-                                "If Step ${nextIncomplete.index} just succeeded, you MUST call " +
-                                "mark_steps_complete([${nextIncomplete.index}]) NOW before calling " +
-                                "any other tool. Do not proceed to the next step without doing this.")
-                        } else {
-                            append("All plan steps are complete. Provide a final summary to the user.")
-                        }
-                    }
-                    nextMessages += OllamaChatMessage(role = "user", content = reminder)
                 }
 
                 // Create a new assistant placeholder for the follow-up turn and tell the
