@@ -160,7 +160,7 @@ fun ChatScreen(
                             Icon(
                                 Icons.Default.Psychology,
                                 contentDescription = "Thinking settings",
-                                tint = if (uiState.thinkingEnabled)
+                                tint = if (uiState.isThinkingOn)
                                     MaterialTheme.colorScheme.primary
                                 else
                                     LocalContentColor.current
@@ -541,11 +541,11 @@ fun ChatScreen(
                     )
                 }
                 Switch(
-                    checked = uiState.thinkingEnabled,
+                    checked = uiState.isThinkingOn,
                     onCheckedChange = { viewModel.toggleThinking() }
                 )
             }
-            if (uiState.thinkingEnabled) {
+            if (uiState.isThinkingOn) {
                 HorizontalDivider()
                 Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
                     Text(

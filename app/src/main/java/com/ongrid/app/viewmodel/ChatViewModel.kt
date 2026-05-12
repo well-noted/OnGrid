@@ -33,8 +33,15 @@ data class ChatUiState(
     val disabledToolNames: Set<String> = emptySet(),
     /** True when the current model advertises the "thinking" capability. */
     val supportsThinking: Boolean = false,
-    /** Whether the user has enabled extended reasoning for the next turn. */
-    val thinkingEnabled: Boolean = false,
+    /**
+     * User's explicit preference for extended reasoning:
+     * - null  = no override; let the model use its built-in default
+     * - true  = force thinking on
+     * - false = force thinking off
+     */
+    val thinkingEnabled: Boolean? = null,
+    /** True once a ThinkingToken arrived this session, meaning the model defaults to thinking. */
+    val lastTurnUsedThinking: Boolean = false,
     /** Thinking token budget sent to the model when thinking is enabled (0–32768). */
     val thinkingBudget: Int = 8192,
     /** Accumulated reasoning content streamed by the current (in-progress) turn. */
@@ -49,7 +56,14 @@ data class ChatUiState(
     val activeSkillIds: Set<String> = emptySet(),
     /** True when the skill picker sheet should be shown. */
     val showSkillPicker: Boolean = false
-)
+) {
+    /**
+     * True when thinking is effectively on — either the user forced it, or the model was
+     * auto-detected as a thinker during a previous turn.
+     */
+    val isThinkingOn: Boolean
+        get() = thinkingEnabled == true || (thinkingEnabled == null && lastTurnUsedThinking)
+}
 
 class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -111,7 +125,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         _uiState.value = _uiState.value.copy(
             disabledToolNames = emptySet(),
             supportsThinking = false,
-            thinkingEnabled = false,
+            thinkingEnabled = null,
+            lastTurnUsedThinking = false,
             streamingThinkingContent = "",
             modelContextLength = null,
             tokensUsedLastTurn = 0
@@ -128,6 +143,12 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             currentServer = OllamaServer(host = entity.serverHost, port = entity.serverPort)
             currentModel = entity.modelName
             _messages.value = repo.getMessages(conversationId)
+            // Auto-detect: if persisted messages include thinking content, the model is a thinker.
+            val hadThinking = _messages.value.any { it.thinkingContent != null }
+            _uiState.value = _uiState.value.copy(
+                thinkingEnabled = null,
+                lastTurnUsedThinking = hadThinking
+            )
             loadTools()
             checkThinkingSupport(currentServer!!.baseUrl, currentModel)
         }
@@ -142,7 +163,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         currentModel = modelName
         _uiState.value = _uiState.value.copy(
             supportsThinking = false,
-            thinkingEnabled = false,
+            thinkingEnabled = null,
+            lastTurnUsedThinking = false,
             modelContextLength = null,
             tokensUsedLastTurn = 0
         )
@@ -172,8 +194,10 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     /** Toggle extended reasoning on/off for the current session. */
     fun toggleThinking() {
+        // Flip from the effective state: if thinking is on (user-set OR auto-detected), turn it
+        // off explicitly; otherwise turn it on explicitly.
         _uiState.value = _uiState.value.copy(
-            thinkingEnabled = !_uiState.value.thinkingEnabled
+            thinkingEnabled = if (_uiState.value.isThinkingOn) false else true
         )
     }
 
@@ -219,8 +243,9 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             messages = history,
             stream = true,
             tools = tools,
-            think = if (_uiState.value.thinkingEnabled) true else null,
-            options = if (_uiState.value.thinkingEnabled)
+            // null think = model decides; true/false = explicit override
+            think = if (_uiState.value.supportsThinking) _uiState.value.thinkingEnabled else null,
+            options = if (_uiState.value.isThinkingOn)
                 OllamaRequestOptions(thinkingBudget = _uiState.value.thinkingBudget, numCtx = contextLength)
             else if (contextLength != null)
                 OllamaRequestOptions(numCtx = contextLength)
@@ -248,10 +273,14 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     is ChatServiceEvent.Token ->
                         updateStreamingMessage(event.msgId, event.content)
 
-                    is ChatServiceEvent.ThinkingToken ->
+                    is ChatServiceEvent.ThinkingToken -> {
                         _uiState.value = _uiState.value.copy(
-                            streamingThinkingContent = event.thinking
+                            streamingThinkingContent = event.thinking,
+                            // Auto-sync the button to ON so the user can see thinking is active
+                            // and has the option to disable it for the next turn.
+                            lastTurnUsedThinking = true
                         )
+                    }
 
                     is ChatServiceEvent.FinalizeMessage ->
                         if (event.content.isBlank()) {
@@ -433,7 +462,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             val supported = ollamaRepo.checkThinkingSupport(baseUrl, modelName)
             _uiState.value = _uiState.value.copy(
                 supportsThinking = supported,
-                thinkingEnabled = if (!supported) false else _uiState.value.thinkingEnabled
+                // If the model doesn't support thinking, clear any lingering override.
+                thinkingEnabled = if (!supported) null else _uiState.value.thinkingEnabled
             )
         }
         viewModelScope.launch {
