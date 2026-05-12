@@ -25,6 +25,10 @@ class ConversationRepository(private val db: AppDatabase) {
         db.projectDao().deleteById(id)
     }
 
+    suspend fun updateProject(id: String, name: String, description: String) {
+        db.projectDao().update(id, name, description)
+    }
+
     // ── Conversations ─────────────────────────────────────────────────────────
 
     suspend fun getConversation(id: String): ConversationEntity? =

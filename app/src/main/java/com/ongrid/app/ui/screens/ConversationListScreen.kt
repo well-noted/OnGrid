@@ -18,6 +18,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Chat
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.MenuBook
 import androidx.compose.material.icons.filled.MoreVert
@@ -76,7 +77,8 @@ fun ConversationListScreen(
     onOpenConversation: (conversationId: String) -> Unit,
     onNewChat: (server: OllamaServer, modelName: String) -> Unit,
     onManageServers: () -> Unit,
-    onOpenSettings: () -> Unit
+    onOpenSettings: () -> Unit,
+    onOpenProject: (projectId: String) -> Unit = {}
 ) {
     val serverSetupState by viewModel.serverSetupState.collectAsState()
     val projects by viewModel.projects.collectAsState()
@@ -155,6 +157,7 @@ fun ConversationListScreen(
                             project = project,
                             selected = selectedProjectId == project.id,
                             onSelect = { viewModel.selectProject(project.id) },
+                            onManage = { onOpenProject(project.id) },
                             onDelete = { viewModel.deleteProject(project.id) }
                         )
                     }
@@ -343,6 +346,7 @@ private fun ProjectChip(
     project: ProjectEntity,
     selected: Boolean,
     onSelect: () -> Unit,
+    onManage: () -> Unit,
     onDelete: () -> Unit
 ) {
     var showMenu by remember { mutableStateOf(false) }
@@ -359,6 +363,14 @@ private fun ProjectChip(
             }
         )
         DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
+            DropdownMenuItem(
+                text = { Text("Manage project") },
+                leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null) },
+                onClick = {
+                    showMenu = false
+                    onManage()
+                }
+            )
             DropdownMenuItem(
                 text = { Text("Delete project") },
                 leadingIcon = { Icon(Icons.Default.Delete, contentDescription = null) },

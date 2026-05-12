@@ -19,6 +19,7 @@ import com.ongrid.app.ui.screens.ChatScreen
 import com.ongrid.app.ui.screens.ConversationListScreen
 import com.ongrid.app.ui.screens.DiscoveryScreen
 import com.ongrid.app.ui.screens.McpServerScreen
+import com.ongrid.app.ui.screens.ProjectDetailScreen
 import com.ongrid.app.ui.screens.SettingsScreen
 import com.ongrid.app.viewmodel.ChatViewModel
 import com.ongrid.app.viewmodel.ConversationListViewModel
@@ -33,11 +34,13 @@ object Routes {
     const val CHAT_EXISTING = "chat/existing/{conversationId}"
     const val MCP_SERVERS = "mcp_servers"
     const val SETTINGS = "settings"
+    const val PROJECT_DETAIL = "project/{projectId}"
 
     fun discoveryRoute(autoScan: Boolean = false) = "discovery?autoScan=$autoScan"
     fun chatNewRoute(serverHost: String, serverPort: Int, modelName: String) =
         "chat/new/${serverHost}/${serverPort}/${java.net.URLEncoder.encode(modelName, "UTF-8")}"
     fun chatExistingRoute(conversationId: String) = "chat/existing/$conversationId"
+    fun projectDetailRoute(projectId: String) = "project/$projectId"
 }
 
 @Composable
@@ -86,6 +89,9 @@ fun AppNavigation() {
                         },
                         onOpenSettings = {
                             navController.navigate(Routes.SETTINGS)
+                        },
+                        onOpenProject = { projectId ->
+                            navController.navigate(Routes.projectDetailRoute(projectId))
                         }
                     )
                 }
@@ -150,6 +156,31 @@ fun AppNavigation() {
         composable(Routes.SETTINGS) {
             SettingsScreen(
                 onNavigateBack = { navController.popBackStack() }
+            )
+        }
+
+        composable(
+            route = Routes.PROJECT_DETAIL,
+            arguments = listOf(
+                navArgument("projectId") { type = NavType.StringType }
+            )
+        ) { backStack ->
+            val projectId = backStack.arguments?.getString("projectId") ?: return@composable
+            ProjectDetailScreen(
+                projectId = projectId,
+                viewModel = conversationListViewModel,
+                onNavigateBack = { navController.popBackStack() },
+                onOpenConversation = { conversationId ->
+                    conversationListViewModel.selectProject(null)
+                    chatViewModel.resumeConversation(conversationId)
+                    navController.navigate(Routes.chatExistingRoute(conversationId))
+                },
+                onNewChat = { server, modelName ->
+                    chatViewModel.initNewConversation(server, modelName)
+                    chatViewModel.loadTools()
+                    chatViewModel.setProjectForConversation(projectId)
+                    navController.navigate(Routes.chatNewRoute(server.host, server.port, modelName))
+                }
             )
         }
     }
