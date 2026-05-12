@@ -17,7 +17,7 @@ class SkillRepository(private val dao: SkillDao) {
         val fileNameHint = rawSegment
         val ext = fileNameHint.substringAfterLast('.', "").lowercase()
 
-        val rawText: String? = when (ext) {
+        val rawText: String = when (ext) {
             "skill", "zip" -> readSkillMdFromZip(context, uri)
             else -> context.contentResolver.openInputStream(uri)?.bufferedReader()?.readText()
         } ?: return null
