@@ -11,18 +11,22 @@ class SkillRepository(private val dao: SkillDao) {
     val allSkills: Flow<List<SkillEntity>> = dao.allSkills()
 
     suspend fun importFromUri(context: Context, uri: Uri): SkillEntity? {
-        val rawSegment = uri.lastPathSegment
-            ?.substringAfterLast('/')
-            ?.substringAfterLast(':') ?: return null
-        val fileNameHint = rawSegment
-        val ext = fileNameHint.substringAfterLast('.', "").lowercase()
+        val displayName = context.contentResolver
+            .query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)
+            ?.use { cursor ->
+                if (cursor.moveToFirst())
+                    cursor.getString(cursor.getColumnIndexOrThrow(android.provider.OpenableColumns.DISPLAY_NAME))
+                else null
+            } ?: return null
+
+        val ext = displayName.substringAfterLast('.', "").lowercase()
+        val fallbackName = displayName.substringBeforeLast('.')
 
         val rawText: String = when (ext) {
             "skill", "zip" -> readSkillMdFromZip(context, uri)
             else -> context.contentResolver.openInputStream(uri)?.bufferedReader()?.readText()
         } ?: return null
 
-        val fallbackName = fileNameHint.substringBeforeLast('.')
         val skill = parseSkillText(rawText, fallbackName)
         dao.insert(skill)
         return skill
