@@ -1,0 +1,25 @@
+package com.ongrid.app.data.local
+
+import androidx.room.Entity
+import androidx.room.PrimaryKey
+import java.util.UUID
+
+enum class AgentStatus { ACTIVE, PAUSED, RETIRED }
+
+@Entity(tableName = "agents")
+data class AgentEntity(
+    @PrimaryKey val id: String = UUID.randomUUID().toString(),
+    val name: String,
+    val role: String = "",
+    val systemPrompt: String = "",
+    val brief: String = "",
+    val briefUpdatedAt: Long = 0L,
+    val status: AgentStatus = AgentStatus.ACTIVE,
+    val defaultSkillIds: String = "[]",
+    val defaultDisabledToolNames: String = "[]",
+    val color: Int = 0,
+    val utilityModelHost: String = "",
+    val utilityModelName: String = "",
+    val retiredAt: Long? = null,
+    val createdAt: Long = System.currentTimeMillis()
+)

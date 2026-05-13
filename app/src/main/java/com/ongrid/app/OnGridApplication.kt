@@ -14,6 +14,8 @@ import com.ongrid.app.data.network.WebSearchApi
 import com.ongrid.app.data.local.MIGRATION_3_4
 import com.ongrid.app.data.local.MIGRATION_4_5
 import com.ongrid.app.data.local.MIGRATION_5_6
+import com.ongrid.app.data.local.MIGRATION_6_7
+import com.ongrid.app.data.repository.AgentRepository
 import com.ongrid.app.data.repository.ConversationRepository
 import com.ongrid.app.data.repository.McpRepository
 import com.ongrid.app.data.repository.OllamaRepository
@@ -101,7 +103,7 @@ class OnGridApplication : Application() {
 
     val database: AppDatabase by lazy {
         Room.databaseBuilder(this, AppDatabase::class.java, "ongrid.db")
-            .addMigrations(MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
+            .addMigrations(MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7)
             .fallbackToDestructiveMigration()
             .build()
     }
@@ -110,9 +112,16 @@ class OnGridApplication : Application() {
     val skillRepository: SkillRepository by lazy { SkillRepository(database.skillDao()) }
     val settingsRepository: SettingsRepository by lazy { SettingsRepository(this) }
     val utilityAgentRepository: UtilityAgentRepository by lazy { UtilityAgentRepository(ollamaApi) }
+    val agentRepository: AgentRepository by lazy {
+        AgentRepository(database.agentDao(), database.agentMemoryDao())
+    }
+    val agentShortcutManager: AgentShortcutManager by lazy { AgentShortcutManager(this) }
 
     /** Set by [ChatViewModel] before starting [ChatForegroundService]; consumed by the service. */
     @Volatile var pendingChatRequest: PendingChatRequest? = null
+
+    /** Set when the app is launched via ACTION_SEND; consumed by the share target flow. */
+    @Volatile var pendingSharedContent: PendingSharedContent? = null
 
     /**
      * Events produced by [ChatForegroundService] and consumed by [ChatViewModel].

@@ -37,4 +37,10 @@ interface ConversationDao {
 
     @Query("SELECT * FROM conversations WHERE ',' || tags || ',' LIKE '%,' || :tag || ',%' ORDER BY updatedAt DESC")
     fun getByTag(tag: String): Flow<List<ConversationEntity>>
+
+    @Query("UPDATE conversations SET agentId = :agentId WHERE id = :id")
+    suspend fun updateAgent(id: String, agentId: String?)
+
+    @Query("SELECT * FROM conversations WHERE agentId = :agentId ORDER BY updatedAt DESC")
+    fun getByAgent(agentId: String): Flow<List<ConversationEntity>>
 }

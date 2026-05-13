@@ -1,0 +1,169 @@
+package com.ongrid.app.viewmodel
+
+import android.app.Application
+import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.viewModelScope
+import com.google.gson.Gson
+import com.google.gson.reflect.TypeToken
+import com.ongrid.app.OnGridApplication
+import com.ongrid.app.data.local.AgentEntity
+import com.ongrid.app.data.local.AgentMemoryEntity
+import com.ongrid.app.data.local.AgentStatus
+import com.ongrid.app.data.local.ConversationEntity
+import com.ongrid.app.data.local.SavedServerEntity
+import com.ongrid.app.data.local.SkillEntity
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.launch
+
+class AgentViewModel(application: Application) : AndroidViewModel(application) {
+
+    private val app = application as OnGridApplication
+    private val agentRepo = app.agentRepository
+    private val serverRepo = app.serverRepository
+    private val skillRepo = app.skillRepository
+
+    /** All agents (for list screen / rail). */
+    val allAgents: StateFlow<List<AgentEntity>> =
+        agentRepo.allAgents().stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    val activeAgents: StateFlow<List<AgentEntity>> =
+        agentRepo.activeAgents().stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    val savedServers: StateFlow<List<SavedServerEntity>> =
+        serverRepo.savedServers.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    val allSkills: StateFlow<List<SkillEntity>> =
+        skillRepo.allSkills.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    private val _selectedAgentId = MutableStateFlow<String?>(null)
+
+    val selectedAgent: StateFlow<AgentEntity?> =
+        _selectedAgentId.flatMapLatest { id ->
+            if (id == null) flowOf(null) else agentRepo.allAgents()
+                .flatMapLatest { agents -> flowOf(agents.find { it.id == id }) }
+        }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
+    val agentMemories: StateFlow<List<AgentMemoryEntity>> =
+        _selectedAgentId.flatMapLatest { id ->
+            if (id == null) flowOf(emptyList())
+            else agentRepo.memoriesForAgent(id)
+        }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    val agentConversations: StateFlow<List<ConversationEntity>> =
+        _selectedAgentId.flatMapLatest { id ->
+            if (id == null) flowOf(emptyList())
+            else app.conversationRepository.conversationsForAgent(id)
+        }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    fun selectAgent(agentId: String) {
+        _selectedAgentId.value = agentId
+    }
+
+    fun createAgent(
+        name: String,
+        role: String,
+        color: Int,
+        onCreated: (AgentEntity) -> Unit
+    ) = viewModelScope.launch {
+        val agent = agentRepo.createAgent(name, role, "", color)
+        syncShortcuts()
+        onCreated(agent)
+    }
+
+    fun updateName(agentId: String, name: String) = viewModelScope.launch {
+        agentRepo.updateName(agentId, name)
+    }
+
+    fun updateRole(agentId: String, role: String) = viewModelScope.launch {
+        agentRepo.updateRole(agentId, role)
+    }
+
+    fun updateSystemPrompt(agentId: String, systemPrompt: String) = viewModelScope.launch {
+        agentRepo.updateSystemPrompt(agentId, systemPrompt)
+    }
+
+    fun updateBrief(agentId: String, brief: String) = viewModelScope.launch {
+        agentRepo.updateBrief(agentId, brief)
+    }
+
+    fun updateStatus(agentId: String, status: AgentStatus) = viewModelScope.launch {
+        agentRepo.updateStatus(agentId, status)
+        syncShortcuts()
+    }
+
+    fun updateColor(agentId: String, color: Int) = viewModelScope.launch {
+        agentRepo.updateColor(agentId, color)
+    }
+
+    fun updateUtilityModel(agentId: String, host: String, model: String) = viewModelScope.launch {
+        agentRepo.updateUtilityModel(agentId, host, model)
+    }
+
+    fun clearUtilityModel(agentId: String) = viewModelScope.launch {
+        agentRepo.updateUtilityModel(agentId, "", "")
+    }
+
+    fun setDefaultSkills(agentId: String, skillIds: List<String>) = viewModelScope.launch {
+        agentRepo.setDefaultSkills(agentId, skillIds)
+    }
+
+    fun setDefaultDisabledTools(agentId: String, toolNames: List<String>) = viewModelScope.launch {
+        agentRepo.setDefaultDisabledTools(agentId, toolNames)
+    }
+
+    fun pinMemory(memoryId: String) = viewModelScope.launch {
+        agentRepo.pinMemory(memoryId)
+    }
+
+    fun unpinMemory(memoryId: String) = viewModelScope.launch {
+        agentRepo.unpinMemory(memoryId)
+    }
+
+    fun deleteMemory(memoryId: String) = viewModelScope.launch {
+        agentRepo.deleteMemory(memoryId)
+    }
+
+    fun clearUnpinnedMemories(agentId: String) = viewModelScope.launch {
+        agentRepo.deleteNonPinnedMemories(agentId)
+    }
+
+    fun removeConversationFromAgent(conversationId: String) = viewModelScope.launch {
+        app.conversationRepository.assignToAgent(conversationId, null)
+    }
+
+    fun pinConversationMessageToMemory(
+        agentId: String,
+        messageContent: String,
+        conversationId: String,
+        messageId: String
+    ) = viewModelScope.launch {
+        agentRepo.insertMemory(
+            AgentMemoryEntity(
+                agentId = agentId,
+                content = messageContent.take(500),
+                isPinned = true,
+                sourceConversationId = conversationId,
+                sourceMessageId = messageId
+            )
+        )
+    }
+
+    private fun syncShortcuts() {
+        viewModelScope.launch {
+            val agents = agentRepo.allAgents().stateIn(viewModelScope).value
+            app.agentShortcutManager.sync(agents)
+        }
+    }
+
+    /** Parse a JSON skill IDs array stored in the agent entity. */
+    fun parseSkillIds(json: String): List<String> = agentRepo.parseSkillIds(json)
+
+    /** Parse a JSON disabled tool names array stored in the agent entity. */
+    fun parseDisabledTools(json: String): List<String> = agentRepo.parseDisabledTools(json)
+}

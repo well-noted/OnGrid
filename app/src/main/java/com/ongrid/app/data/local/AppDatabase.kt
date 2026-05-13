@@ -6,8 +6,8 @@ import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
 @Database(
-    entities = [ProjectEntity::class, ConversationEntity::class, MessageEntity::class, SavedServerEntity::class, SkillEntity::class, ProjectMemoryEntity::class],
-    version = 6,
+    entities = [ProjectEntity::class, ConversationEntity::class, MessageEntity::class, SavedServerEntity::class, SkillEntity::class, ProjectMemoryEntity::class, AgentEntity::class, AgentMemoryEntity::class],
+    version = 7,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -17,6 +17,8 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun savedServerDao(): SavedServerDao
     abstract fun skillDao(): SkillDao
     abstract fun projectMemoryDao(): ProjectMemoryDao
+    abstract fun agentDao(): AgentDao
+    abstract fun agentMemoryDao(): AgentMemoryDao
 }
 
 val MIGRATION_3_4 = object : Migration(3, 4) {
@@ -52,6 +54,51 @@ val MIGRATION_5_6 = object : Migration(5, 6) {
                 projectId TEXT NOT NULL,
                 content TEXT NOT NULL,
                 sourceConversationId TEXT NOT NULL,
+                extractedAt INTEGER NOT NULL
+            )
+            """.trimIndent()
+        )
+    }
+}
+
+val MIGRATION_6_7 = object : Migration(6, 7) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        // Add agentId to conversations
+        db.execSQL("ALTER TABLE conversations ADD COLUMN agentId TEXT")
+        db.execSQL("CREATE INDEX IF NOT EXISTS index_conversations_agentId ON conversations(agentId)")
+
+        // Create agents table
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS agents (
+                id TEXT PRIMARY KEY NOT NULL,
+                name TEXT NOT NULL,
+                role TEXT NOT NULL DEFAULT '',
+                systemPrompt TEXT NOT NULL DEFAULT '',
+                brief TEXT NOT NULL DEFAULT '',
+                briefUpdatedAt INTEGER NOT NULL DEFAULT 0,
+                status TEXT NOT NULL DEFAULT 'ACTIVE',
+                defaultSkillIds TEXT NOT NULL DEFAULT '[]',
+                defaultDisabledToolNames TEXT NOT NULL DEFAULT '[]',
+                color INTEGER NOT NULL DEFAULT 0,
+                utilityModelHost TEXT NOT NULL DEFAULT '',
+                utilityModelName TEXT NOT NULL DEFAULT '',
+                retiredAt INTEGER,
+                createdAt INTEGER NOT NULL
+            )
+            """.trimIndent()
+        )
+
+        // Create agent_memories table
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS agent_memories (
+                id TEXT PRIMARY KEY NOT NULL,
+                agentId TEXT NOT NULL,
+                content TEXT NOT NULL,
+                isPinned INTEGER NOT NULL DEFAULT 0,
+                sourceConversationId TEXT,
+                sourceMessageId TEXT,
                 extractedAt INTEGER NOT NULL
             )
             """.trimIndent()

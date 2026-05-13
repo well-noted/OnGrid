@@ -16,11 +16,12 @@ import java.util.UUID
             onDelete = ForeignKey.SET_NULL
         )
     ],
-    indices = [Index("projectId")]
+    indices = [Index("projectId"), Index("agentId")]
 )
 data class ConversationEntity(
     @PrimaryKey val id: String = UUID.randomUUID().toString(),
     val projectId: String? = null,
+    val agentId: String? = null,
     val title: String = "New Conversation",
     val serverHost: String,
     val serverPort: Int,

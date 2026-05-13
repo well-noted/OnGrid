@@ -17,6 +17,8 @@ import com.ongrid.app.data.model.OllamaServer
 import com.ongrid.app.data.model.OllamaTool
 import com.ongrid.app.data.local.SkillEntity
 import com.ongrid.app.data.local.ProjectMemoryEntity
+import com.ongrid.app.data.local.AgentEntity
+import com.ongrid.app.data.local.AgentMemoryEntity
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -26,6 +28,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
 
 data class ChatUiState(
@@ -63,10 +66,18 @@ data class ChatUiState(
     val currentProjectId: String? = null,
     /** Memories loaded from the current project. */
     val projectMemories: List<ProjectMemoryEntity> = emptyList(),
+    /** The agent currently associated with this conversation. */
+    val currentAgentId: String? = null,
+    /** The loaded agent entity. */
+    val currentAgent: AgentEntity? = null,
+    /** Memories loaded from the current agent. */
+    val agentMemories: List<AgentMemoryEntity> = emptyList(),
     /** Resolved utility server base URL (falls back to conversation server). */
     val utilityBaseUrl: String = "",
     /** Resolved utility model name (falls back to conversation model). */
-    val utilityModelName: String = ""
+    val utilityModelName: String = "",
+    /** Pre-filled text to populate the chat input (set when app is launched via share or shortcut). */
+    val prefillText: String = ""
 ) {
     /** True when extended reasoning is enabled for this conversation. */
     val isThinkingOn: Boolean
@@ -81,6 +92,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     private val ollamaRepo = app.ollamaRepository
     private val utilityAgentRepo = app.utilityAgentRepository
     private val settingsRepo = app.settingsRepository
+    private val agentRepo = app.agentRepository
 
     private val _messages = MutableStateFlow<List<ChatMessage>>(emptyList())
     val messages: StateFlow<List<ChatMessage>> = _messages.asStateFlow()
@@ -150,6 +162,9 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             tokensUsedLastTurn = 0,
             currentProjectId = null,
             projectMemories = emptyList(),
+            currentAgentId = null,
+            currentAgent = null,
+            agentMemories = emptyList(),
             suggestedSkillName = null,
             similarConversationIds = emptyList(),
             showCompressionButton = false
@@ -180,6 +195,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             )
             // Load project memories if there's an associated project
             entity.projectId?.let { loadProjectMemories(it) }
+            // Load agent if there's an associated agent
+            entity.agentId?.let { loadAgent(it) }
             resolveUtilityModel()
             loadTools()
             checkThinkingSupport(currentServer!!.baseUrl, currentModel)
@@ -460,6 +477,52 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                                     }
                                 }
                             }
+
+                            // Agent brief update and memory extraction
+                            val currentAgentId = _uiState.value.currentAgentId
+                            val currentAgent = _uiState.value.currentAgent
+                            if (currentAgentId != null && currentAgent != null) {
+                                val agentExchange = exchange
+                                val agentRole = currentAgent.role
+                                val agentPrompt = currentAgent.systemPrompt
+                                val currentBrief = currentAgent.brief
+                                val existingMemories = _uiState.value.agentMemories
+                                    .map { it.content }
+
+                                // Run brief update and memory extraction in parallel
+                                viewModelScope.launch {
+                                    val briefDeferred = viewModelScope.async {
+                                        utilityAgentRepo.updateAgentBrief(
+                                            postUtilityBase, postUtilityModel,
+                                            currentBrief, agentRole, agentPrompt, agentExchange
+                                        )
+                                    }
+                                    val memoriesDeferred = viewModelScope.async {
+                                        utilityAgentRepo.extractAgentMemories(
+                                            postUtilityBase, postUtilityModel,
+                                            agentRole, agentExchange, existingMemories
+                                        )
+                                    }
+                                    val newBrief = briefDeferred.await()
+                                    val newMemories = memoriesDeferred.await()
+
+                                    if (!newBrief.isNullOrBlank()) {
+                                        agentRepo.updateBrief(currentAgentId, newBrief)
+                                    }
+                                    newMemories.forEach { fact ->
+                                        agentRepo.insertMemory(
+                                            com.ongrid.app.data.local.AgentMemoryEntity(
+                                                agentId = currentAgentId,
+                                                content = fact,
+                                                sourceConversationId = convId
+                                            )
+                                        )
+                                    }
+                                    if (!newBrief.isNullOrBlank() || newMemories.isNotEmpty()) {
+                                        loadAgent(currentAgentId)
+                                    }
+                                }
+                            }
                         } else if (!titleGenerated) {
                             // Utility agent disabled — fall back to original title logic
                             titleGenerated = true
@@ -552,6 +615,87 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     /** Dismiss the similar-conversations banner. */
     fun dismissSimilarConversations() {
         _uiState.value = _uiState.value.copy(similarConversationIds = emptyList())
+    }
+
+    // ── Agent association ─────────────────────────────────────────────────────
+
+    /**
+     * Load an agent and its memories into state, apply default skill/tool config.
+     * If agentId is null, clears any loaded agent.
+     */
+    fun setAgent(agentId: String?) {
+        val convId = currentConversationId
+        if (convId != null) {
+            viewModelScope.launch {
+                app.database.conversationDao().updateAgent(convId, agentId)
+            }
+        }
+        if (agentId == null) {
+            _uiState.value = _uiState.value.copy(
+                currentAgentId = null,
+                currentAgent = null,
+                agentMemories = emptyList()
+            )
+            return
+        }
+        viewModelScope.launch { loadAgent(agentId) }
+    }
+
+    /** Populate the chat input with pre-filled text (e.g. from a share intent). */
+    fun setPrefillText(text: String) {
+        _uiState.value = _uiState.value.copy(prefillText = text)
+    }
+
+    /** Pin a message to the current agent's memory. */
+    fun pinMessageToAgentMemory(messageId: String, messageContent: String) {
+        val agentId = _uiState.value.currentAgentId ?: return
+        val convId = currentConversationId
+        viewModelScope.launch {
+            agentRepo.insertMemory(
+                com.ongrid.app.data.local.AgentMemoryEntity(
+                    agentId = agentId,
+                    content = messageContent.take(500),
+                    isPinned = true,
+                    sourceConversationId = convId,
+                    sourceMessageId = messageId
+                )
+            )
+            loadAgent(agentId)
+        }
+    }
+
+    private suspend fun loadAgent(agentId: String) {
+        val agent = agentRepo.getAgent(agentId) ?: return
+        val memories = agentRepo.memoriesForAgentOnce(agentId)
+
+        // Resolve utility model for this agent
+        val globalSettings = settingsRepo.settings.first()
+        val globalHost = globalSettings.utilityModelHost.ifBlank { currentServer?.baseUrl ?: "" }
+        val globalModel = globalSettings.utilityModelName.ifBlank { currentModel }
+        val (resolvedHost, resolvedModel) = agentRepo.resolveUtilityModel(agentId, globalHost, globalModel)
+
+        _uiState.value = _uiState.value.copy(
+            currentAgentId = agentId,
+            currentAgent = agent,
+            agentMemories = memories,
+            utilityBaseUrl = resolvedHost,
+            utilityModelName = resolvedModel
+        )
+
+        // Apply agent's default disabled tools
+        val disabledTools = agentRepo.parseDisabledTools(agent.defaultDisabledToolNames).toSet()
+        _uiState.value = _uiState.value.copy(disabledToolNames = disabledTools)
+
+        // Activate agent's default skills
+        val skillIds = agentRepo.parseSkillIds(agent.defaultSkillIds)
+        val availableSkills = _uiState.value.availableSkills
+        val currentActiveIds = _uiState.value.activeSkillIds
+        skillIds.forEach { skillId ->
+            if (skillId !in currentActiveIds) {
+                val skill = availableSkills.find { it.id == skillId } ?: return@forEach
+                activateSkill(skill)
+            }
+        }
     }
 
     // ── Project association ───────────────────────────────────────────────────
@@ -653,7 +797,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             modelName = currentModel,
             title = title,
             thinkingEnabled = _uiState.value.thinkingEnabled,
-            projectId = _uiState.value.currentProjectId
+            projectId = _uiState.value.currentProjectId,
+            agentId = _uiState.value.currentAgentId
         )
         currentConversationId = entity.id
         // Persist the model choice as lastUsed so the next "New Chat" uses it directly.
@@ -668,8 +813,51 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         val skillSystem = all.filter { it.role == MessageRole.SYSTEM && it.isSkill }
         val conversation = all.filter { it.role != MessageRole.SYSTEM }
 
+        val agent = _uiState.value.currentAgent
+        val agentMemories = _uiState.value.agentMemories
+
+        // Build injected context messages (1–3 from spec)
+        val injected = mutableListOf<OllamaChatMessage>()
+
+        if (agent != null) {
+            // 1. Agent system prompt (replaces global system prompt if set)
+            if (agent.systemPrompt.isNotBlank()) {
+                injected += OllamaChatMessage(role = "system", content = agent.systemPrompt)
+            } else {
+                // Fall back to global system prompt messages from the conversation
+                injected += mainSystem.map { msg ->
+                    OllamaChatMessage(role = msg.role.name.lowercase(), content = msg.content)
+                }
+            }
+
+            // 2. Agent brief
+            if (agent.brief.isNotBlank()) {
+                injected += OllamaChatMessage(
+                    role = "system",
+                    content = "Your current context:\n${agent.brief}"
+                )
+            }
+
+            // 3. Agent memories — pinned first, then recent, capped at 10
+            val capped = (agentMemories.filter { it.isPinned } +
+                    agentMemories.filter { !it.isPinned }).take(10)
+            if (capped.isNotEmpty()) {
+                val bullet = capped.joinToString("\n") { "• ${it.content}" }
+                injected += OllamaChatMessage(
+                    role = "system",
+                    content = "What you remember from previous conversations:\n$bullet"
+                )
+            }
+        } else {
+            // No agent: use existing global system prompt messages as normal
+            injected += mainSystem.map { msg ->
+                OllamaChatMessage(role = msg.role.name.lowercase(), content = msg.content)
+            }
+        }
+
+        // Project memories (kept for backward compatibility with project-only conversations)
         val projectMemories = _uiState.value.projectMemories
-        val memoryMessages = if (projectMemories.isNotEmpty()) {
+        val memoryMessages = if (projectMemories.isNotEmpty() && agent == null) {
             val bullet = projectMemories.joinToString("\n") { "• ${it.content}" }
             listOf(
                 OllamaChatMessage(
@@ -679,13 +867,17 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             )
         } else emptyList()
 
-        return (mainSystem.map { msg ->
+        // 4. Skills
+        val skillMessages = skillSystem.map { msg ->
             OllamaChatMessage(role = msg.role.name.lowercase(), content = msg.content)
-        } + memoryMessages + skillSystem.map { msg ->
+        }
+
+        // 5. Conversation history
+        val conversationMessages = conversation.map { msg ->
             OllamaChatMessage(role = msg.role.name.lowercase(), content = msg.content)
-        } + conversation.map { msg ->
-            OllamaChatMessage(role = msg.role.name.lowercase(), content = msg.content)
-        })
+        }
+
+        return injected + memoryMessages + skillMessages + conversationMessages
     }
 
     private fun updateStreamingMessage(id: String, content: String) {

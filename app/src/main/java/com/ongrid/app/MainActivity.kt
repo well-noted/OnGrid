@@ -1,6 +1,7 @@
 package com.ongrid.app
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
@@ -18,6 +19,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        handleShareIntent(intent)
         enableEdgeToEdge()
         setContent {
             OnGridTheme {
@@ -29,5 +31,23 @@ class MainActivity : ComponentActivity() {
         ) {
             requestNotificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        handleShareIntent(intent)
+    }
+
+    private fun handleShareIntent(intent: Intent) {
+        if (intent.action != Intent.ACTION_SEND) return
+        val text = intent.getStringExtra(Intent.EXTRA_TEXT) ?: return
+        val subject = intent.getStringExtra(Intent.EXTRA_SUBJECT)
+        val targetAgentId = intent.getStringExtra("target_agent_id")
+        val app = application as OnGridApplication
+        app.pendingSharedContent = PendingSharedContent(
+            text = text,
+            subject = subject,
+            targetAgentId = targetAgentId
+        )
     }
 }

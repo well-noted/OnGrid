@@ -10,11 +10,15 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowForward
@@ -62,11 +66,13 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
+import com.ongrid.app.data.local.AgentEntity
 import com.ongrid.app.data.local.ConversationEntity
 import com.ongrid.app.data.local.ProjectEntity
 import com.ongrid.app.data.local.SavedServerEntity
 import com.ongrid.app.data.model.OllamaServer
 import com.ongrid.app.viewmodel.ConversationListViewModel
+import com.ongrid.app.viewmodel.AgentViewModel
 import com.ongrid.app.viewmodel.ServerSetupState
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
@@ -81,17 +87,22 @@ fun ConversationListScreen(
     onNewChat: (server: OllamaServer, modelName: String) -> Unit,
     onManageServers: () -> Unit,
     onOpenSettings: () -> Unit,
-    onOpenProject: (projectId: String) -> Unit = {}
+    onOpenProject: (projectId: String) -> Unit = {},
+    agentViewModel: AgentViewModel? = null,
+    onOpenAgent: (agentId: String) -> Unit = {},
+    onShowAllAgents: () -> Unit = {}
 ) {
     val serverSetupState by viewModel.serverSetupState.collectAsState()
     val projects by viewModel.projects.collectAsState()
     val conversations by viewModel.displayedConversations.collectAsState()
     val selectedProjectId by viewModel.selectedProjectId.collectAsState()
+    val activeAgents by (agentViewModel?.activeAgents?.collectAsState() ?: remember { mutableStateOf(emptyList()) })
 
     var showNewProjectDialog by remember { mutableStateOf(false) }
     var newProjectName by remember { mutableStateOf("") }
     var showModelPicker by remember { mutableStateOf(false) }
     var showProjectsSheet by remember { mutableStateOf(false) }
+    var showCreateAgentSheet by remember { mutableStateOf(false) }
     val bottomSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val projectsSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val scope = rememberCoroutineScope()
@@ -144,6 +155,16 @@ fun ConversationListScreen(
                 .fillMaxSize()
                 .padding(innerPadding)
         ) {
+            // Agent rail — shown when agentViewModel is provided
+            if (agentViewModel != null) {
+                AgentRail(
+                    agents = activeAgents,
+                    onOpenAgent = onOpenAgent,
+                    onCreateAgent = { showCreateAgentSheet = true },
+                    onSeeAll = onShowAllAgents
+                )
+            }
+
             // Active project filter
             val activeProject = projects.find { it.id == selectedProjectId }
             if (activeProject != null) {
@@ -347,6 +368,79 @@ fun ConversationListScreen(
                 }
             }
         )
+    }
+
+    // ── Create Agent sheet ────────────────────────────────────────────────────
+    if (showCreateAgentSheet && agentViewModel != null) {
+        CreateAgentSheet(
+            onDismiss = { showCreateAgentSheet = false },
+            onCreated = { created ->
+                showCreateAgentSheet = false
+                onOpenAgent(created.id)
+            },
+            viewModel = agentViewModel
+        )
+    }
+}
+
+@Composable
+private fun AgentRail(
+    agents: List<AgentEntity>,
+    onOpenAgent: (String) -> Unit,
+    onCreateAgent: () -> Unit,
+    onSeeAll: () -> Unit
+) {
+    Column(modifier = Modifier.fillMaxWidth()) {
+        LazyRow(
+            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            items(agents, key = { it.id }) { agent ->
+                val dotColor = if (agent.color != 0) androidx.compose.ui.graphics.Color(agent.color)
+                else MaterialTheme.colorScheme.primary
+                Row(
+                    modifier = Modifier
+                        .clickable { onOpenAgent(agent.id) }
+                        .background(
+                            dotColor.copy(alpha = 0.12f),
+                            RoundedCornerShape(20.dp)
+                        )
+                        .padding(horizontal = 12.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(8.dp)
+                            .background(dotColor, CircleShape)
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    Text(agent.name, style = MaterialTheme.typography.labelMedium, maxLines = 1)
+                }
+            }
+            item {
+                Box(
+                    modifier = Modifier
+                        .clickable(onClick = onCreateAgent)
+                        .background(
+                            MaterialTheme.colorScheme.surfaceVariant,
+                            RoundedCornerShape(20.dp)
+                        )
+                        .padding(horizontal = 12.dp, vertical = 6.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text("+", style = MaterialTheme.typography.labelMedium)
+                }
+            }
+        }
+        TextButton(
+            onClick = onSeeAll,
+            modifier = Modifier
+                .align(Alignment.End)
+                .padding(end = 12.dp)
+        ) {
+            Text("See all agents", style = MaterialTheme.typography.labelSmall)
+        }
     }
 }
 

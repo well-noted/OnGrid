@@ -39,6 +39,7 @@ class ConversationRepository(private val db: AppDatabase) {
         serverPort: Int,
         modelName: String,
         projectId: String? = null,
+        agentId: String? = null,
         title: String = "New Conversation",
         thinkingEnabled: Boolean = false
     ): ConversationEntity {
@@ -47,6 +48,7 @@ class ConversationRepository(private val db: AppDatabase) {
             serverPort = serverPort,
             modelName = modelName,
             projectId = projectId,
+            agentId = agentId,
             title = title,
             thinkingEnabled = thinkingEnabled
         )
@@ -69,6 +71,13 @@ class ConversationRepository(private val db: AppDatabase) {
     suspend fun assignToProject(conversationId: String, projectId: String?) {
         db.conversationDao().updateProject(conversationId, projectId)
     }
+
+    suspend fun assignToAgent(conversationId: String, agentId: String?) {
+        db.conversationDao().updateAgent(conversationId, agentId)
+    }
+
+    fun conversationsForAgent(agentId: String) =
+        db.conversationDao().getByAgent(agentId)
 
     suspend fun deleteConversation(id: String) {
         db.conversationDao().deleteById(id)

@@ -15,4 +15,5 @@ data class SavedServerEntity(
     val addedAt: Long = System.currentTimeMillis()
 ) {
     val displayName: String get() = "$host:$port"
+    val baseUrl: String get() = "http://$host:$port"
 }

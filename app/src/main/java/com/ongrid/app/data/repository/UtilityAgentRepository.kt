@@ -217,4 +217,82 @@ $summaryList"""
         Log.w(TAG, "summariseMessages failed: ${e.message}")
         null
     }
+
+    /**
+     * Update the living state document (brief) for an agent after a conversation.
+     * Returns the updated brief text, or null on failure.
+     */
+    suspend fun updateAgentBrief(
+        baseUrl: String,
+        modelName: String,
+        currentBrief: String,
+        agentRole: String,
+        agentSystemPrompt: String,
+        conversationExchange: String
+    ): String? = try {
+        val promptSnippet = agentSystemPrompt.take(200)
+        val briefSection = if (currentBrief.isBlank()) "(none yet)" else currentBrief
+        val request = OllamaChatRequest(
+            model = modelName,
+            messages = listOf(
+                OllamaChatMessage(
+                    role = "user",
+                    content = """You are maintaining the state document for an agent whose role is: $agentRole. Their instructions are: $promptSnippet. Update the following brief based on the conversation that just occurred. Preserve accurate existing content. Return in exactly this format under 100 words: STATUS: [one sentence] / RECENT: [one or two things just done] / OPEN: [one or two unresolved items]
+
+Current brief:
+$briefSection
+
+Conversation:
+${conversationExchange.take(1200)}"""
+                )
+            ),
+            stream = false
+        )
+        api.chatOnce(baseUrl, request)?.trim()?.takeIf { it.isNotBlank() }
+    } catch (e: Exception) {
+        Log.w(TAG, "updateAgentBrief failed: ${e.message}")
+        null
+    }
+
+    /**
+     * Extract 0–3 specific facts an agent should remember for future conversations.
+     * Returns an empty list if nothing noteworthy was found or the request fails.
+     */
+    suspend fun extractAgentMemories(
+        baseUrl: String,
+        modelName: String,
+        agentRole: String,
+        conversationExchange: String,
+        existingMemories: List<String>
+    ): List<String> {
+        return try {
+            val existingList = if (existingMemories.isEmpty()) "(none)"
+            else existingMemories.take(20).joinToString("\n") { "- $it" }
+            val request = OllamaChatRequest(
+                model = modelName,
+                messages = listOf(
+                    OllamaChatMessage(
+                        role = "user",
+                        content = """You are updating the memory of an agent whose role is: $agentRole. Based on this conversation, identify 0–3 specific facts this agent should remember for future conversations with this user. Focus on user preferences, recurring patterns, and important decisions. Do not duplicate these existing memories:
+$existingList
+
+Return one fact per line or nothing if nothing is worth remembering.
+
+Conversation:
+${conversationExchange.take(1200)}"""
+                    )
+                ),
+                stream = false
+            )
+            val raw = api.chatOnce(baseUrl, request)?.trim() ?: return emptyList()
+            if (raw.lowercase() == "none" || raw.isBlank()) return emptyList()
+            raw.lines()
+                .map { it.trim().trimStart('-', '*', '•', '·').trim() }
+                .filter { it.isNotBlank() && it.lowercase() != "none" }
+                .take(3)
+        } catch (e: Exception) {
+            Log.w(TAG, "extractAgentMemories failed: ${e.message}")
+            emptyList()
+        }
+    }
 }

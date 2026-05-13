@@ -33,14 +33,18 @@ import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Compress
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.Psychology
+import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.Send
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
@@ -111,6 +115,12 @@ fun ChatScreen(
     val savedServersWithModels by viewModel.savedServersWithModels.collectAsState()
     val listState = rememberLazyListState()
     var inputText by remember { mutableStateOf("") }
+    LaunchedEffect(uiState.prefillText) {
+        if (uiState.prefillText.isNotBlank()) {
+            inputText = uiState.prefillText
+            viewModel.setPrefillText("")
+        }
+    }
     var showModelPicker by remember { mutableStateOf(false) }
     val modelPickerSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var showToolSheet by remember { mutableStateOf(false) }
@@ -380,7 +390,13 @@ fun ChatScreen(
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 items(messages, key = { it.id }) { message ->
-                    MessageBubble(message = message)
+                    MessageBubble(
+                        message = message,
+                        agentName = uiState.currentAgent?.name,
+                        onPinToAgent = if (uiState.currentAgentId != null) { id, content ->
+                            viewModel.pinMessageToAgentMemory(id, content)
+                        } else null
+                    )
                 }
                 if (uiState.isLoading && messages.lastOrNull()?.isStreaming == false) {
                     item {
@@ -891,7 +907,11 @@ fun ChatScreen(
 
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
-private fun MessageBubble(message: ChatMessage) {
+private fun MessageBubble(
+    message: ChatMessage,
+    agentName: String? = null,
+    onPinToAgent: ((messageId: String, content: String) -> Unit)? = null
+) {
     val isUser = message.role == MessageRole.USER
     val isTool = message.role == MessageRole.TOOL
     val isSkill = message.isSkill
@@ -931,6 +951,7 @@ private fun MessageBubble(message: ChatMessage) {
 
     var toolExpanded by remember { mutableStateOf(false) }
     var thinkingExpanded by remember { mutableStateOf(false) }
+    var showContextMenu by remember { mutableStateOf(false) }
     val clipboardManager = LocalClipboardManager.current
 
     val infiniteTransition = rememberInfiniteTransition(label = "cursor")
@@ -1047,7 +1068,11 @@ private fun MessageBubble(message: ChatMessage) {
                         .combinedClickable(
                             onClick = {},
                             onLongClick = {
-                                clipboardManager.setText(AnnotatedString(message.content))
+                                if (!isUser && onPinToAgent != null) {
+                                    showContextMenu = true
+                                } else {
+                                    clipboardManager.setText(AnnotatedString(message.content))
+                                }
                             }
                         ),
                     shape = RoundedCornerShape(
@@ -1088,6 +1113,44 @@ private fun MessageBubble(message: ChatMessage) {
                                 color = Color.White
                             )
                         }
+                    }
+                }
+                // Context menu for long-press on assistant messages
+                if (!isUser && showContextMenu) {
+                    DropdownMenu(
+                        expanded = showContextMenu,
+                        onDismissRequest = { showContextMenu = false }
+                    ) {
+                        if (onPinToAgent != null && agentName != null) {
+                            DropdownMenuItem(
+                                text = { Text("Pin to $agentName's memory") },
+                                leadingIcon = {
+                                    Icon(
+                                        Icons.Default.PushPin,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                },
+                                onClick = {
+                                    onPinToAgent(message.id, message.content)
+                                    showContextMenu = false
+                                }
+                            )
+                        }
+                        DropdownMenuItem(
+                            text = { Text("Copy") },
+                            leadingIcon = {
+                                Icon(
+                                    Icons.Default.ContentCopy,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            },
+                            onClick = {
+                                clipboardManager.setText(AnnotatedString(message.content))
+                                showContextMenu = false
+                            }
+                        )
                     }
                 }
             }
