@@ -15,6 +15,8 @@ import com.ongrid.app.data.local.AgentMemoryEntity
 import com.ongrid.app.data.local.AgentStatus
 import com.ongrid.app.data.local.ConversationEntity
 import com.ongrid.app.data.local.DreamLogEntity
+import com.ongrid.app.data.local.DreamScheduleEntity
+import com.ongrid.app.data.local.DreamScheduleType
 import com.ongrid.app.data.local.SavedServerEntity
 import com.ongrid.app.data.local.SkillEntity
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -23,6 +25,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
@@ -32,6 +35,7 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
     private val agentRepo = app.agentRepository
     private val serverRepo = app.serverRepository
     private val skillRepo = app.skillRepository
+    private val scheduleRepo = app.dreamScheduleRepository
 
     /** All agents (for list screen / rail). */
     val allAgents: StateFlow<List<AgentEntity>> =
@@ -72,6 +76,20 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
             if (id == null) flowOf(emptyList())
             else agentRepo.dreamLogsForAgent(id)
         }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    /** Dream schedules for the currently selected agent. */
+    val dreamSchedules: StateFlow<List<DreamScheduleEntity>> =
+        _selectedAgentId.flatMapLatest { id ->
+            if (id == null) flowOf(emptyList())
+            else scheduleRepo.schedulesForAgent(id)
+        }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    /**
+     * Live terminal-feed lines emitted by [com.ongrid.app.DreamWorker].
+     * Collected while the Agent screen is visible; lines are dropped when no collector
+     * is active (acceptable for a live status feed).
+     */
+    val dreamLiveFeed = app.dreamLogChannel.receiveAsFlow()
 
     /** True while a manual Dream Now operation is in progress. */
     private val _isDreaming = MutableStateFlow(false)
@@ -219,6 +237,32 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
 
     /** Parse a JSON disabled tool names array stored in the agent entity. */
     fun parseDisabledTools(json: String): List<String> = agentRepo.parseDisabledTools(json)
+
+    // ── Dream Scheduler ────────────────────────────────────────────────────
+
+    fun addDreamSchedule(agentId: String, type: DreamScheduleType, hour: Int, minute: Int, label: String) =
+        viewModelScope.launch {
+            val entity = DreamScheduleEntity(
+                agentId = agentId,
+                scheduleType = type,
+                timeHour = hour,
+                timeMinute = minute,
+                label = label
+            )
+            scheduleRepo.addSchedule(entity)
+            app.dreamScheduleManager.schedule(entity)
+        }
+
+    fun deleteDreamSchedule(schedule: DreamScheduleEntity) = viewModelScope.launch {
+        scheduleRepo.deleteSchedule(schedule.id)
+        app.dreamScheduleManager.cancel(schedule.id)
+    }
+
+    fun toggleDreamSchedule(schedule: DreamScheduleEntity, enabled: Boolean) = viewModelScope.launch {
+        scheduleRepo.setEnabled(schedule.id, enabled)
+        val updated = schedule.copy(isEnabled = enabled)
+        app.dreamScheduleManager.schedule(updated)
+    }
 
     companion object {
         private const val DREAM_NOW_TAG = "dream_now_manual"

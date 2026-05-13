@@ -108,6 +108,8 @@ import com.ongrid.app.data.local.AgentMemoryEntity
 import com.ongrid.app.data.local.AgentStatus
 import com.ongrid.app.data.local.ConversationEntity
 import com.ongrid.app.data.local.DreamLogEntity
+import com.ongrid.app.data.local.DreamScheduleEntity
+import com.ongrid.app.data.local.DreamScheduleType
 import com.ongrid.app.data.local.SavedServerEntity
 import com.ongrid.app.data.model.OllamaServer
 import com.ongrid.app.data.local.SkillEntity
@@ -139,6 +141,18 @@ fun AgentScreen(
     val savedServers by viewModel.savedServers.collectAsState()
     val dreamLogs by viewModel.dreamLogs.collectAsState()
     val isDreaming by viewModel.isDreaming.collectAsState()
+    val dreamSchedules by viewModel.dreamSchedules.collectAsState()
+
+    // Live terminal feed from DreamWorker
+    val liveFeedLines = remember { androidx.compose.runtime.mutableStateListOf<String>() }
+    var showLiveFeed by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        viewModel.dreamLiveFeed.collect { line ->
+            liveFeedLines.add(line)
+            if (liveFeedLines.size > 200) liveFeedLines.removeAt(0)
+            showLiveFeed = true
+        }
+    }
 
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
@@ -153,6 +167,7 @@ fun AgentScreen(
     var showStatusMenu by remember { mutableStateOf(false) }
     var showModelPickerForTalk by remember { mutableStateOf(false) }
     var showCognitionSheet by remember { mutableStateOf(false) }
+    var showSchedulerSheet by remember { mutableStateOf(false) }
 
     // Collapsible card states
     var briefExpanded by remember { mutableStateOf(true) }
@@ -251,7 +266,8 @@ fun AgentScreen(
                         isDreaming = isDreaming,
                         expanded = dreamJournalExpanded,
                         onToggleExpand = { dreamJournalExpanded = !dreamJournalExpanded },
-                        onDreamNow = { viewModel.triggerDreamNow() }
+                        onDreamNow = { viewModel.triggerDreamNow() },
+                        onScheduler = { showSchedulerSheet = true }
                     )
                 }
             }
@@ -472,6 +488,33 @@ fun AgentScreen(
                 showCognitionSheet = false
                 viewModel.triggerDreamNow()
             }
+        )
+    }
+
+    // ── Dream Scheduler Sheet ─────────────────────────────────────────────────
+    if (showSchedulerSheet) {
+        DreamSchedulerSheet(
+            agentId = currentAgent.id,
+            schedules = dreamSchedules,
+            onDismiss = { showSchedulerSheet = false },
+            onAddTimeSchedule = { hour, minute ->
+                val label = "%02d:%02d".format(hour, minute)
+                viewModel.addDreamSchedule(currentAgent.id, DreamScheduleType.TIME_OF_DAY, hour, minute, label)
+            },
+            onAddWifiSchedule = {
+                viewModel.addDreamSchedule(currentAgent.id, DreamScheduleType.WIFI_CONNECT, 0, 0, "On Wi-Fi Connect")
+            },
+            onDelete = { viewModel.deleteDreamSchedule(it) },
+            onToggle = { schedule, enabled -> viewModel.toggleDreamSchedule(schedule, enabled) }
+        )
+    }
+
+    // ── Live Dream Terminal Feed ──────────────────────────────────────────────
+    if (showLiveFeed && liveFeedLines.isNotEmpty()) {
+        DreamLiveFeedOverlay(
+            lines = liveFeedLines,
+            isDreaming = isDreaming,
+            onDismiss = { showLiveFeed = false }
         )
     }
 }
@@ -1393,7 +1436,8 @@ private fun DreamJournalCard(
     isDreaming: Boolean,
     expanded: Boolean,
     onToggleExpand: () -> Unit,
-    onDreamNow: () -> Unit
+    onDreamNow: () -> Unit,
+    onScheduler: () -> Unit
 ) {
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(16.dp)) {
@@ -1432,7 +1476,21 @@ private fun DreamJournalCard(
                             modifier = Modifier.size(16.dp),
                             strokeWidth = 2.dp
                         )
+                        Spacer(Modifier.width(6.dp))
+                        Text(
+                            "Dreaming\u2026",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.primary
+                        )
                         Spacer(Modifier.width(8.dp))
+                    }
+                    // Scheduler icon button
+                    IconButton(onClick = onScheduler, modifier = Modifier.size(32.dp)) {
+                        Icon(
+                            Icons.Default.Settings,
+                            contentDescription = "Scheduler",
+                            modifier = Modifier.size(16.dp)
+                        )
                     }
                     FilledTonalButton(
                         onClick = onDreamNow,
@@ -1520,6 +1578,265 @@ private fun DreamLogEntry(log: DreamLogEntity) {
                     ),
                     modifier = Modifier.padding(8.dp)
                 )
+            }
+        }
+    }
+}
+
+// ── Dream Scheduler Sheet ─────────────────────────────────────────────────────
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun DreamSchedulerSheet(
+    agentId: String,
+    schedules: List<DreamScheduleEntity>,
+    onDismiss: () -> Unit,
+    onAddTimeSchedule: (hour: Int, minute: Int) -> Unit,
+    onAddWifiSchedule: () -> Unit,
+    onDelete: (DreamScheduleEntity) -> Unit,
+    onToggle: (DreamScheduleEntity, Boolean) -> Unit
+) {
+    var showTimePicker by remember { mutableStateOf(false) }
+    var pendingHour by remember { mutableStateOf(2) }
+    var pendingMinute by remember { mutableStateOf(0) }
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp)
+                .padding(bottom = 32.dp)
+                .verticalScroll(rememberScrollState())
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.AutoAwesome, contentDescription = null)
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    "Dream Scheduler",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
+            Spacer(Modifier.height(4.dp))
+            Text(
+                "Automate when the Dream Cycle runs for this agent.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(Modifier.height(16.dp))
+
+            // Existing schedules
+            if (schedules.isEmpty()) {
+                Text(
+                    "No schedules configured yet.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+                )
+            } else {
+                schedules.forEach { schedule ->
+                    ScheduleRow(
+                        schedule = schedule,
+                        onToggle = { onToggle(schedule, it) },
+                        onDelete = { onDelete(schedule) }
+                    )
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+                }
+            }
+
+            Spacer(Modifier.height(16.dp))
+            Text("Add Trigger", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
+            Spacer(Modifier.height(8.dp))
+
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                // Time-based trigger
+                OutlinedButton(
+                    onClick = { showTimePicker = true },
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Icon(Icons.Default.History, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text("Time of Day", style = MaterialTheme.typography.labelMedium)
+                }
+                // Wi-Fi trigger
+                OutlinedButton(
+                    onClick = {
+                        if (schedules.none { it.scheduleType == DreamScheduleType.WIFI_CONNECT }) {
+                            onAddWifiSchedule()
+                        }
+                    },
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Icon(Icons.Default.SmartToy, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text("On Wi-Fi", style = MaterialTheme.typography.labelMedium)
+                }
+            }
+
+            if (showTimePicker) {
+                Spacer(Modifier.height(16.dp))
+                HorizontalDivider()
+                Spacer(Modifier.height(12.dp))
+                Text("Select Time", style = MaterialTheme.typography.labelMedium)
+                Spacer(Modifier.height(8.dp))
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    OutlinedTextField(
+                        value = "%02d".format(pendingHour),
+                        onValueChange = { v -> v.toIntOrNull()?.coerceIn(0, 23)?.let { pendingHour = it } },
+                        label = { Text("Hour") },
+                        modifier = Modifier.weight(1f),
+                        singleLine = true
+                    )
+                    Text(":", style = MaterialTheme.typography.titleLarge)
+                    OutlinedTextField(
+                        value = "%02d".format(pendingMinute),
+                        onValueChange = { v -> v.toIntOrNull()?.coerceIn(0, 59)?.let { pendingMinute = it } },
+                        label = { Text("Min") },
+                        modifier = Modifier.weight(1f),
+                        singleLine = true
+                    )
+                    FilledTonalButton(onClick = {
+                        onAddTimeSchedule(pendingHour, pendingMinute)
+                        showTimePicker = false
+                    }) {
+                        Text("Add")
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ScheduleRow(
+    schedule: DreamScheduleEntity,
+    onToggle: (Boolean) -> Unit,
+    onDelete: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            val typeLabel = when (schedule.scheduleType) {
+                DreamScheduleType.TIME_OF_DAY -> "\uD83D\uDD52 Daily at %02d:%02d".format(schedule.timeHour, schedule.timeMinute)
+                DreamScheduleType.WIFI_CONNECT -> "\uD83D\uDCF6 On Wi-Fi Connect"
+            }
+            Text(
+                text = schedule.label.ifBlank { typeLabel },
+                style = MaterialTheme.typography.bodyMedium
+            )
+            Text(
+                text = typeLabel,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        Switch(
+            checked = schedule.isEnabled,
+            onCheckedChange = onToggle
+        )
+        IconButton(onClick = onDelete, modifier = Modifier.size(36.dp)) {
+            Icon(
+                Icons.Default.Delete,
+                contentDescription = "Delete schedule",
+                modifier = Modifier.size(18.dp),
+                tint = MaterialTheme.colorScheme.error
+            )
+        }
+    }
+}
+
+// ── Dream Live Feed Overlay ───────────────────────────────────────────────────
+
+@Composable
+private fun DreamLiveFeedOverlay(
+    lines: List<String>,
+    isDreaming: Boolean,
+    onDismiss: () -> Unit
+) {
+    val listState = androidx.compose.foundation.lazy.rememberLazyListState()
+    LaunchedEffect(lines.size) {
+        if (lines.isNotEmpty()) listState.animateScrollToItem(lines.size - 1)
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black.copy(alpha = 0.78f))
+            .padding(16.dp)
+    ) {
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .fillMaxHeight(0.55f)
+                .align(Alignment.BottomCenter),
+            colors = CardDefaults.cardColors(
+                containerColor = Color(0xFF0D1117)
+            ),
+            shape = RoundedCornerShape(12.dp)
+        ) {
+            Column(modifier = Modifier.padding(12.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (isDreaming) {
+                            val pulse by rememberInfiniteTransition(label = "pulse").animateFloat(
+                                initialValue = 0.4f,
+                                targetValue = 1f,
+                                animationSpec = infiniteRepeatable(tween(800), RepeatMode.Reverse),
+                                label = "pulse"
+                            )
+                            Text(
+                                "\u2601\uFE0F",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = Color.White.copy(alpha = pulse)
+                            )
+                            Spacer(Modifier.width(6.dp))
+                        }
+                        Text(
+                            "Dreaming\u2026",
+                            style = MaterialTheme.typography.labelMedium.copy(
+                                fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
+                            ),
+                            color = Color(0xFF7EC8E3)
+                        )
+                    }
+                    IconButton(onClick = onDismiss, modifier = Modifier.size(28.dp)) {
+                        Icon(Icons.Default.Close, contentDescription = "Close", tint = Color.White, modifier = Modifier.size(16.dp))
+                    }
+                }
+                HorizontalDivider(color = Color(0xFF30363D), modifier = Modifier.padding(vertical = 6.dp))
+                LazyColumn(
+                    state = listState,
+                    modifier = Modifier.fillMaxSize()
+                ) {
+                    items(lines) { line ->
+                        Text(
+                            text = line,
+                            style = MaterialTheme.typography.labelSmall.copy(
+                                fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
+                            ),
+                            color = when {
+                                line.startsWith("✓") -> Color(0xFF3FB950)
+                                line.startsWith("⚠") -> Color(0xFFD29922)
+                                line.startsWith("▶") -> Color(0xFF7EC8E3)
+                                else -> Color(0xFFE6EDF3)
+                            },
+                            modifier = Modifier.padding(vertical = 1.dp)
+                        )
+                    }
+                }
             }
         }
     }

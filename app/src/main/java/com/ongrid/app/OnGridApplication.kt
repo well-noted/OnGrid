@@ -20,6 +20,7 @@ import com.ongrid.app.data.local.MIGRATION_4_5
 import com.ongrid.app.data.local.MIGRATION_5_6
 import com.ongrid.app.data.local.MIGRATION_6_7
 import com.ongrid.app.data.local.MIGRATION_7_8
+import com.ongrid.app.data.local.MIGRATION_8_9
 import com.ongrid.app.data.repository.AgentRepository
 import com.ongrid.app.data.repository.ConversationRepository
 import com.ongrid.app.data.repository.McpRepository
@@ -27,6 +28,7 @@ import com.ongrid.app.data.repository.OllamaRepository
 import com.ongrid.app.data.repository.ServerRepository
 import com.ongrid.app.data.repository.SettingsRepository
 import com.ongrid.app.data.repository.SkillRepository
+import com.ongrid.app.data.repository.DreamScheduleRepository
 import com.ongrid.app.data.repository.UtilityAgentRepository
 import com.ongrid.app.data.repository.WebSearchRepository
 import kotlinx.coroutines.channels.Channel
@@ -95,6 +97,9 @@ class OnGridApplication : Application() {
             dreamRequest
         )
 
+        // Restore TIME_OF_DAY alarms after reboot / fresh install
+        dreamScheduleManager.syncAll()
+
         registerActivityLifecycleCallbacks(object : ActivityLifecycleCallbacks {
             override fun onActivityStarted(a: Activity) { startedActivityCount++ }
             override fun onActivityStopped(a: Activity) { startedActivityCount-- }
@@ -124,7 +129,7 @@ class OnGridApplication : Application() {
 
     val database: AppDatabase by lazy {
         Room.databaseBuilder(this, AppDatabase::class.java, "ongrid.db")
-            .addMigrations(MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8)
+            .addMigrations(MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9)
             .fallbackToDestructiveMigration()
             .build()
     }
@@ -136,6 +141,10 @@ class OnGridApplication : Application() {
     val agentRepository: AgentRepository by lazy {
         AgentRepository(database.agentDao(), database.agentMemoryDao(), database.dreamLogDao())
     }
+    val dreamScheduleRepository: DreamScheduleRepository by lazy {
+        DreamScheduleRepository(database.dreamScheduleDao())
+    }
+    val dreamScheduleManager: DreamScheduleManager by lazy { DreamScheduleManager(this) }
     val agentShortcutManager: AgentShortcutManager by lazy { AgentShortcutManager(this) }
 
     /** Set by [ChatViewModel] before starting [ChatForegroundService]; consumed by the service. */
@@ -149,4 +158,10 @@ class OnGridApplication : Application() {
      * Unlimited capacity so the service never blocks even if the UI is momentarily paused.
      */
     val chatServiceChannel = Channel<ChatServiceEvent>(Channel.UNLIMITED)
+
+    /**
+     * Live terminal-feed lines emitted by [DreamWorker] and consumed by the UI overlay.
+     * Rendezvous channel — lines are dropped if no collector is active (OK for a live feed).
+     */
+    val dreamLogChannel = kotlinx.coroutines.channels.Channel<String>(64)
 }

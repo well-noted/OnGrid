@@ -50,6 +50,20 @@
             android:name=".ChatForegroundService"
             android:foregroundServiceType="dataSync"
             android:exported="false" />
+
+        <!-- Fires when a TIME_OF_DAY dream schedule alarm triggers -->
+        <receiver
+            android:name=".DreamAlarmReceiver"
+            android:exported="false" />
+
+        <!-- Fires when the device connects to Wi-Fi (WIFI_CONNECT dream schedules) -->
+        <receiver
+            android:name=".WifiConnectReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.net.conn.CONNECTIVITY_CHANGE" />
+            </intent-filter>
+        </receiver>
     </application>
 
 </manifest>

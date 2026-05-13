@@ -17,6 +17,11 @@ class MainActivity : ComponentActivity() {
     private val requestNotificationPermission =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { /* no-op */ }
 
+    companion object {
+        /** Extra set by [DreamNotificationHelper] to surface the live dream-log overlay. */
+        const val EXTRA_SHOW_DREAM_LOG = "show_dream_log"
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         handleShareIntent(intent)

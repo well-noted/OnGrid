@@ -6,8 +6,8 @@ import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
 @Database(
-    entities = [ProjectEntity::class, ConversationEntity::class, MessageEntity::class, SavedServerEntity::class, SkillEntity::class, ProjectMemoryEntity::class, AgentEntity::class, AgentMemoryEntity::class, DreamLogEntity::class],
-    version = 8,
+    entities = [ProjectEntity::class, ConversationEntity::class, MessageEntity::class, SavedServerEntity::class, SkillEntity::class, ProjectMemoryEntity::class, AgentEntity::class, AgentMemoryEntity::class, DreamLogEntity::class, DreamScheduleEntity::class],
+    version = 9,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -20,6 +20,26 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun agentDao(): AgentDao
     abstract fun agentMemoryDao(): AgentMemoryDao
     abstract fun dreamLogDao(): DreamLogDao
+    abstract fun dreamScheduleDao(): DreamScheduleDao
+}
+
+val MIGRATION_8_9 = object : Migration(8, 9) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS dream_schedules (
+                id TEXT PRIMARY KEY NOT NULL,
+                agentId TEXT NOT NULL,
+                scheduleType TEXT NOT NULL,
+                timeHour INTEGER NOT NULL DEFAULT 2,
+                timeMinute INTEGER NOT NULL DEFAULT 0,
+                label TEXT NOT NULL DEFAULT '',
+                isEnabled INTEGER NOT NULL DEFAULT 1,
+                createdAt INTEGER NOT NULL
+            )
+            """.trimIndent()
+        )
+    }
 }
 
 val MIGRATION_7_8 = object : Migration(7, 8) {

@@ -20,6 +20,10 @@ private const val TAG = "DreamWorker"
  * 3. Review the OPEN section of the brief for tasks stagnant > 3 days.
  * 4. If [AgentEntity.isMoodTrackingEnabled], calculate mood from recent conversation turns.
  * 5. Persist all changes and write a [DreamLogEntity].
+ *
+ * While running, a persistent "☁️ Dreaming…" notification is shown and live log lines
+ * are emitted to [OnGridApplication.dreamLogChannel] so that the UI can surface a
+ * terminal-feed overlay when the app is open.
  */
 class DreamWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
 
@@ -39,16 +43,37 @@ class DreamWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
             return Result.success()
         }
 
+        val serverSubtext = buildString {
+            append(settings.utilityModelHost.ifBlank { "Utility Server" })
+            append(" | Agent: ")
+            append(settings.utilityModelName.ifBlank { "—" })
+        }
+
         for (agent in dreamingAgents) {
+            DreamNotificationHelper.notify(
+                applicationContext,
+                taskLabel = "Memory Triage",
+                agentName = agent.name,
+                serverSubtext = serverSubtext
+            )
+            emitLog("▶ Starting dream cycle for ${agent.name}")
             try {
                 dreamAgent(agent.id)
             } catch (e: Exception) {
                 Log.w(TAG, "Dream failed for agent ${agent.id}: ${e.message}")
+                emitLog("⚠ Dream failed for ${agent.name}: ${e.message}")
             }
         }
 
+        DreamNotificationHelper.dismiss(applicationContext)
+        emitLog("✓ Dream cycle complete")
         Log.d(TAG, "Dream cycle complete")
         return Result.success()
+    }
+
+    /** Emit a live-log line consumed by the UI terminal feed. */
+    private fun emitLog(line: String) {
+        app.dreamLogChannel.trySend(line)
     }
 
     private suspend fun dreamAgent(agentId: String) {
@@ -63,6 +88,7 @@ class DreamWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
 
         if (utilHost.isBlank() || utilModel.isBlank()) {
             Log.d(TAG, "No utility model resolved for agent ${agent.name} — skipping")
+            emitLog("  ↳ No utility model resolved — skipping ${agent.name}")
             return
         }
 
@@ -77,8 +103,10 @@ class DreamWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
         val totalMemoryBudget = (agent.maxContextTokens * 0.3).toInt()
 
         changeLog["tokens_before"] = promptTokens + briefTokens + memoryTokens
+        emitLog("  [1/3] Token audit: ${promptTokens + briefTokens + memoryTokens} tokens (budget ${agent.maxContextTokens})")
 
         if (memoryTokens > totalMemoryBudget) {
+            emitLog("  ↳ Memory over budget (${memoryTokens}/${totalMemoryBudget}) — triaging")
             val unpinnedContents = memories.filter { !it.isPinned }.map { it.content }
             if (unpinnedContents.isNotEmpty()) {
                 val triage = app.utilityAgentRepository.triageMemories(utilHost, utilModel, unpinnedContents)
@@ -105,10 +133,14 @@ class DreamWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
                 changeLog["memories_merged"] = triage.merge.size
                 changeLog["memories_deleted"] = toDelete.size
                 if (triage.synthesised != null) changeLog["synthesised_fact"] = triage.synthesised
+                emitLog("  ↳ Merged ${triage.merge.size}, deleted ${toDelete.size} memories. Saved ~$tokensSaved tokens")
             }
+        } else {
+            emitLog("  ↳ Token budget OK — no triage needed")
         }
 
         // ── 2. Brief stale-task review ────────────────────────────────────────
+        emitLog("  [2/3] Brief review")
         if (agent.brief.isNotBlank() && agent.isAutoBriefEnabled) {
             val conversations = app.conversationRepository.conversationsForAgent(agentId).first()
             val lastConvAt = conversations.maxOfOrNull { it.updatedAt } ?: agent.briefUpdatedAt
@@ -119,10 +151,16 @@ class DreamWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
             if (review?.updatedBrief != null && review.changeDescription != "No changes") {
                 app.agentRepository.updateBrief(agentId, review.updatedBrief)
                 changeLog["brief_change"] = review.changeDescription
+                emitLog("  ↳ Brief updated: ${review.changeDescription}")
+            } else {
+                emitLog("  ↳ No stale tasks found")
             }
+        } else {
+            emitLog("  ↳ Skipped (auto-brief disabled or brief empty)")
         }
 
         // ── 3. Mood calculation ───────────────────────────────────────────────
+        emitLog("  [3/3] Mood calculation")
         if (agent.isMoodTrackingEnabled) {
             val conversations = app.conversationRepository.conversationsForAgent(agentId).first()
             val recentConv = conversations.firstOrNull()
@@ -135,8 +173,13 @@ class DreamWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
                     moodChange = "${agent.currentMood} -> $newMood"
                     app.agentRepository.updateMood(agentId, newMood)
                     changeLog["mood"] = moodChange!!
+                    emitLog("  ↳ Mood shift: $moodChange")
+                } else {
+                    emitLog("  ↳ Mood unchanged: ${agent.currentMood}")
                 }
             }
+        } else {
+            emitLog("  ↳ Skipped (mood tracking disabled)")
         }
 
         // ── 4. Write dream log ────────────────────────────────────────────────
@@ -161,6 +204,7 @@ class DreamWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
             )
         )
         app.agentRepository.updateLastDreamedAt(agentId, System.currentTimeMillis())
+        emitLog("✓ ${agent.name}: $summary")
         Log.d(TAG, "Dream complete for ${agent.name}: $summary")
     }
 }
