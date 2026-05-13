@@ -18,6 +18,9 @@ interface AgentDao {
     @Query("SELECT * FROM agents WHERE id = :id LIMIT 1")
     suspend fun getById(id: String): AgentEntity?
 
+    @Query("SELECT * FROM agents WHERE id = :id LIMIT 1")
+    fun observeById(id: String): Flow<AgentEntity?>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insert(agent: AgentEntity)
 

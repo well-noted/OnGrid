@@ -20,6 +20,7 @@ class AgentRepository(
 
     fun activeAgents(): Flow<List<AgentEntity>> = agentDao.activeAgents()
     fun allAgents(): Flow<List<AgentEntity>> = agentDao.allAgents()
+    fun observeAgent(agentId: String): Flow<AgentEntity?> = agentDao.observeById(agentId)
     fun memoriesForAgent(agentId: String): Flow<List<AgentMemoryEntity>> = memoryDao.memoriesForAgent(agentId)
     fun dreamLogsForAgent(agentId: String): Flow<List<DreamLogEntity>> = dreamLogDao.logsForAgent(agentId)
 

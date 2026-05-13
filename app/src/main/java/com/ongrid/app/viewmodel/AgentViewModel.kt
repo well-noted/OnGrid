@@ -55,8 +55,7 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
 
     val selectedAgent: StateFlow<AgentEntity?> =
         _selectedAgentId.flatMapLatest { id ->
-            if (id == null) flowOf(null) else agentRepo.allAgents()
-                .flatMapLatest { agents -> flowOf(agents.find { it.id == id }) }
+            if (id == null) flowOf(null) else agentRepo.observeAgent(id)
         }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
     val agentMemories: StateFlow<List<AgentMemoryEntity>> =
