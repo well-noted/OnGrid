@@ -340,14 +340,17 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         if (settings.utilityAgentEnabled) {
             if (settings.skillSuggestionEnabled) {
                 viewModelScope.launch {
-                    val skillNames = _uiState.value.availableSkills.map { it.name }
+                    val activeIds = _uiState.value.activeSkillIds
+                    val skillNames = _uiState.value.availableSkills
+                        .filter { it.id !in activeIds }
+                        .map { it.name }
                     val suggestion = utilityAgentRepo.suggestSkill(utilityBaseUrl, utilityModel, text, skillNames)
                     if (suggestion != null) {
                         _uiState.value = _uiState.value.copy(suggestedSkillName = suggestion)
                     }
                 }
             }
-            if (settings.conversationSimilarityEnabled) {
+            if (settings.conversationSimilarityEnabled && _uiState.value.currentAgentId == null) {
                 viewModelScope.launch {
                     val conversations = repo.allConversations.first()
                         .filter { it.id != currentConversationId }
@@ -718,7 +721,9 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
         // Activate agent's default skills
         val skillIds = agentRepo.parseSkillIds(agent.defaultSkillIds)
-        val availableSkills = _uiState.value.availableSkills
+        // Use first() to read directly from the DB in case the uiState cache hasn't
+        // been populated yet (race between the init collector and loadAgent).
+        val availableSkills = app.skillRepository.allSkills.first()
         val currentActiveIds = _uiState.value.activeSkillIds
         skillIds.forEach { skillId ->
             if (skillId !in currentActiveIds) {
