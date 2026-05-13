@@ -15,7 +15,7 @@ An Android app that discovers [Ollama](https://ollama.com) servers on your local
 - **Markdown rendering** — assistant responses are rendered with full Markdown formatting (headings, code blocks, bold/italic, lists).
 - **Token usage indicator** — displays prompt + generated token counts after each turn; warns when the context window is approaching capacity.
 - **Time/date awareness** — the current date and time are automatically injected into every conversation so the model is always grounded in the present.
-- **Thinking Mode** — enable extended reasoning ("thinking") for models that support it; configure the token budget (up to 32 768 tokens) and watch live thinking output stream in-chat.
+- **Thinking Mode** — enable extended reasoning ("thinking") for models that support it; configure the token budget (up to 32,768 tokens) and watch live thinking output stream in-chat.
 - **MCP tool integration** — add any number of MCP servers (HTTP or SSE transport). OnGrid discovers their tool list via the JSON-RPC `tools/list` method and exposes those tools to the active Ollama model as native function-calling tools. When the model requests a tool call, OnGrid executes it against the MCP server and feeds the result back automatically.
 - **Conversation history** — all chats are persisted locally in a Room database and listed on the Conversations screen for easy recall.
 - **Persistent settings** — saved Ollama servers and their cached model lists are stored with DataStore so they survive restarts.
