@@ -38,6 +38,7 @@ import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import kotlinx.coroutines.flow.first
 import androidx.navigation.navArgument
 import com.ongrid.app.OnGridApplication
 import com.ongrid.app.data.repository.SettingsRepository
@@ -394,9 +395,12 @@ private fun MainShell(
     onOpenProject: (projectId: String) -> Unit,
     onOpenAgent: (agentId: String) -> Unit
 ) {
-    val storedTab by settingsRepository.lastActiveTab.collectAsState(initial = "chat")
-    var selectedTab by rememberSaveable { mutableStateOf(storedTab) }
+    var selectedTab by rememberSaveable { mutableStateOf("chat") }
     val coroutineScope = rememberCoroutineScope()
+
+    LaunchedEffect(Unit) {
+        selectedTab = settingsRepository.lastActiveTab.first()
+    }
 
     Scaffold(
         bottomBar = {
