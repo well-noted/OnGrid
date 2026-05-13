@@ -194,12 +194,19 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     /** Called when the user reopens an existing conversation from the list. */
     fun resumeConversation(conversationId: String) {
         viewModelScope.launch {
+            val alreadyActiveAndLoading =
+                currentConversationId == conversationId && _uiState.value.isLoading
             currentConversationId = conversationId
             titleGenerated = true  // existing conversations already have a title
             val entity = repo.getConversation(conversationId) ?: return@launch
             currentServer = OllamaServer(host = entity.serverHost, port = entity.serverPort)
             currentModel = entity.modelName
-            _messages.value = repo.getMessages(conversationId)
+            // Skip reloading from DB if this conversation is already live and streaming —
+            // the in-memory streaming bubble hasn't been saved yet and would be lost,
+            // turning the blinking cursor into a spinner on return.
+            if (!alreadyActiveAndLoading) {
+                _messages.value = repo.getMessages(conversationId)
+            }
             val hadThinking = _messages.value.any { it.thinkingContent != null }
             _uiState.value = _uiState.value.copy(
                 thinkingEnabled = entity.thinkingEnabled,
