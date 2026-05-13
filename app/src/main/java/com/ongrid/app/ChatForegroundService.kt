@@ -20,6 +20,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import java.util.UUID
 
@@ -207,12 +208,42 @@ class ChatForegroundService : Service() {
                                 if (agentId == null) {
                                     "Error: form_memory is only available inside an agent workspace." to true
                                 } else {
-                                    val result = app.formMemoryRepository.formMemory(
-                                        agentId, pending.conversationId, args
-                                    )
-                                    // Notify the ViewModel so it can refresh the in-memory list.
-                                    app.chatServiceChannel.send(ChatServiceEvent.MemoryFormed(agentId))
-                                    result to false
+                                    val candidate = args["content"]?.toString()?.trim()
+                                    if (candidate.isNullOrBlank()) {
+                                        "Error: the 'content' argument is required and must not be blank." to true
+                                    } else {
+                                        // Check existing memories for duplicates / contradictions
+                                        val existingMemories = app.agentRepository.memoriesForAgentOnce(agentId)
+                                        val existingContents = existingMemories.map { it.content }
+                                        val settings = app.settingsRepository.settings.first()
+                                        val globalHost = settings.utilityModelHost.ifBlank { "" }
+                                        val globalModel = settings.utilityModelName.ifBlank { "" }
+                                        val (utilHost, utilModel) = app.agentRepository.resolveUtilityModel(agentId, globalHost, globalModel)
+
+                                        val conflict = if (utilHost.isNotBlank() && utilModel.isNotBlank()) {
+                                            app.utilityAgentRepository.checkMemoryConflict(
+                                                utilHost, utilModel, candidate, existingContents
+                                            )
+                                        } else null
+
+                                        when {
+                                            conflict != null && conflict == "duplicate" -> {
+                                                "Memory already exists: \"$candidate\" — no duplicate stored." to false
+                                            }
+                                            conflict != null && conflict.startsWith("contradiction:") -> {
+                                                val conflicting = conflict.removePrefix("contradiction:").trim()
+                                                "Memory not stored — contradicts existing memory: \"$conflicting\". Update the existing memory if the new fact supersedes it." to false
+                                            }
+                                            else -> {
+                                                val result = app.formMemoryRepository.formMemory(
+                                                    agentId, pending.conversationId, args
+                                                )
+                                                // Notify the ViewModel so it can refresh the in-memory list.
+                                                app.chatServiceChannel.send(ChatServiceEvent.MemoryFormed(agentId))
+                                                result to false
+                                            }
+                                        }
+                                    }
                                 }
                             }
                             funcName == "use_skill" -> {

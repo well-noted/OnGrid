@@ -120,29 +120,33 @@ class DreamWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
         emitLog("  [1/4] Memory dedup & triage: ${promptTokens + briefTokens + memoryTokens} tokens (budget ${agent.maxContextTokens})${if (overBudget) " ⚠ over budget" else ""}")
 
         val unpinned = memories.filter { !it.isPinned }
-        if (unpinned.isNotEmpty()) {
-            val unpinnedContents = unpinned.map { it.content }
-            emitLog("  ↳ Scanning ${unpinned.size} unpinned memories for redundancy…")
-            val triage = app.utilityAgentRepository.triageMemories(utilHost, utilModel, unpinnedContents)
+        if (memories.isNotEmpty()) {
+            val allContents = memories.map { it.content }
+            val pinnedCount = memories.count { it.isPinned }
+            emitLog("  ↳ Scanning ${memories.size} memories ($pinnedCount pinned) for redundancy…")
+            val triage = app.utilityAgentRepository.triageMemories(utilHost, utilModel, allContents)
 
             // Delete flagged memories
-            val toDelete = triage.delete.mapNotNull { unpinned.getOrNull(it) }
+            val toDelete = triage.delete.mapNotNull { memories.getOrNull(it) }
             toDelete.forEach { app.agentRepository.deleteMemory(it.id) }
 
             // Replace merged memories with synthesised fact
             if (triage.synthesised != null && triage.merge.isNotEmpty()) {
-                val toMerge = triage.merge.mapNotNull { unpinned.getOrNull(it) }
+                val toMerge = triage.merge.mapNotNull { memories.getOrNull(it) }
+                // Synthesised entry inherits pinned status if ALL merged entries were pinned
+                val inheritPinned = toMerge.all { it.isPinned }
                 toMerge.forEach { app.agentRepository.deleteMemory(it.id) }
                 app.agentRepository.insertMemory(
                     com.ongrid.app.data.local.AgentMemoryEntity(
                         agentId = agentId,
-                        content = triage.synthesised
+                        content = triage.synthesised,
+                        isPinned = inheritPinned
                     )
                 )
             }
 
             val removed = toDelete.size + (if (triage.synthesised != null) triage.merge.size - 1 else 0).coerceAtLeast(0)
-            tokensSaved = removed * (unpinnedContents.firstOrNull()?.length?.div(4) ?: 20)
+            tokensSaved = removed * (allContents.firstOrNull()?.length?.div(4) ?: 20)
             changeLog["memories_merged"] = triage.merge.size
             changeLog["memories_deleted"] = toDelete.size
             if (triage.synthesised != null) changeLog["synthesised_fact"] = triage.synthesised
@@ -157,7 +161,7 @@ class DreamWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
             }
             emitLog("  ↳ Dedup complete: $actions. Saved ~$tokensSaved tokens")
         } else {
-            emitLog("  ↳ No unpinned memories to triage")
+            emitLog("  ↳ No memories to triage")
         }
 
         // ── 2. Brief stale-task review ────────────────────────────────────────

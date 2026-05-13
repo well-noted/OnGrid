@@ -255,6 +255,52 @@ ${conversationExchange.take(1200)}"""
     }
 
     /**
+     * Check whether a candidate memory [content] is already covered by or contradicts any of
+     * [existingMemories].
+     *
+     * Returns one of:
+     * - `"ok"` — the fact is novel and should be stored.
+     * - `"duplicate"` — an existing memory already covers this fact (returns as-is).
+     * - `"contradiction:<existing fact>"` — the candidate contradicts an existing memory.
+     * - `null` on failure (should default to storing the memory).
+     */
+    suspend fun checkMemoryConflict(
+        baseUrl: String,
+        modelName: String,
+        candidate: String,
+        existingMemories: List<String>
+    ): String? {
+        if (existingMemories.isEmpty()) return "ok"
+        return try {
+            val numbered = existingMemories.mapIndexed { i, m -> "[$i] $m" }.joinToString("\n")
+            val request = OllamaChatRequest(
+                model = modelName,
+                messages = listOf(
+                    OllamaChatMessage(
+                        role = "user",
+                        content = """You are a memory deduplication assistant. Given a candidate memory and a list of existing memories, respond with EXACTLY one of:
+- "ok" — the candidate is a genuinely new fact not covered by any existing memory
+- "duplicate" — an existing memory already captures this fact
+- "contradiction: <the conflicting existing memory text>" — the candidate directly contradicts an existing memory
+
+Existing memories:
+$numbered
+
+Candidate memory: "$candidate"
+
+Reply with only the single word or phrase as described above. No other text."""
+                    )
+                ),
+                stream = false
+            )
+            api.chatOnce(baseUrl, request)?.trim()?.lowercase()
+        } catch (e: Exception) {
+            Log.w(TAG, "checkMemoryConflict failed: ${e.message}")
+            null
+        }
+    }
+
+    /**
      * Extract 0–3 specific facts an agent should remember for future conversations.
      * Returns an empty list if nothing noteworthy was found or the request fails.
      */
