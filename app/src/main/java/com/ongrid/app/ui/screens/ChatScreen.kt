@@ -393,6 +393,9 @@ fun ChatScreen(
                     MessageBubble(
                         message = message,
                         agentName = uiState.currentAgent?.name,
+                        assistantBubbleColor = uiState.currentAgent?.color
+                            ?.takeIf { it != 0 }
+                            ?.let { Color(it).copy(alpha = 0.22f) },
                         onPinToAgent = if (uiState.currentAgentId != null) { id, content ->
                             viewModel.pinMessageToAgentMemory(id, content)
                         } else null
@@ -908,6 +911,7 @@ fun ChatScreen(
 private fun MessageBubble(
     message: ChatMessage,
     agentName: String? = null,
+    assistantBubbleColor: Color? = null,
     onPinToAgent: ((messageId: String, content: String) -> Unit)? = null
 ) {
     val isUser = message.role == MessageRole.USER
@@ -1080,7 +1084,7 @@ private fun MessageBubble(
                         bottomEnd = if (isUser) 4.dp else 16.dp
                     ),
                     colors = CardDefaults.cardColors(
-                        containerColor = if (isUser) UserBubble else AssistantBubble
+                        containerColor = if (isUser) UserBubble else (assistantBubbleColor ?: AssistantBubble)
                     )
                 ) {
                     Column(modifier = Modifier.padding(12.dp)) {

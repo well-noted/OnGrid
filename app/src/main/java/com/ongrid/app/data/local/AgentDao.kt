@@ -54,6 +54,9 @@ interface AgentDao {
     @Query("UPDATE agents SET color = :color WHERE id = :id")
     suspend fun updateColor(id: String, color: Int)
 
+    @Query("UPDATE agents SET avatarIcon = :icon WHERE id = :id")
+    suspend fun updateAvatarIcon(id: String, icon: String)
+
     @Query("UPDATE agents SET isDreamingEnabled = :enabled WHERE id = :id")
     suspend fun updateDreamingEnabled(id: String, enabled: Boolean)
 

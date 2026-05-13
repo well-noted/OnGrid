@@ -8,6 +8,7 @@ import android.net.NetworkCapabilities
 import androidx.work.Constraints
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
+import androidx.work.workDataOf
 import com.ongrid.app.data.local.DreamScheduleType
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -31,16 +32,17 @@ class WifiConnectReceiver : BroadcastReceiver() {
 
         scope.launch {
             val app = context.applicationContext as OnGridApplication
-            val hasWifiSchedule = app.database.dreamScheduleDao()
+            val wifiSchedules = app.database.dreamScheduleDao()
                 .allEnabledSchedules()
-                .any { it.scheduleType == DreamScheduleType.WIFI_CONNECT }
+                .filter { it.scheduleType == DreamScheduleType.WIFI_CONNECT }
 
-            if (hasWifiSchedule) {
+            wifiSchedules.forEach { schedule ->
                 WorkManager.getInstance(context).enqueue(
                     OneTimeWorkRequestBuilder<DreamWorker>()
                         .setConstraints(
                             Constraints.Builder().setRequiresBatteryNotLow(false).build()
                         )
+                        .setInputData(workDataOf(DreamWorker.INPUT_KEY_AGENT_ID to schedule.agentId))
                         .addTag("dream_wifi_trigger")
                         .build()
                 )

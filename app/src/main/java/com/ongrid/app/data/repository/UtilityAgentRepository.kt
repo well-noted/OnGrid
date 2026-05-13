@@ -312,18 +312,19 @@ ${conversationExchange.take(1200)}"""
             messages = listOf(
                 OllamaChatMessage(
                     role = "user",
-                    content = """Analyse the emotional tone of this conversation exchange from the perspective of the assistant. 
-Choose exactly one label that best describes the assistant's recent disposition: Neutral, Enthusiastic, Frustrated, Meticulous, Focused, Curious.
+                    content = """Analyse the emotional tone of this conversation exchange from the perspective of the assistant.
+Choose exactly one label that best describes the assistant's current disposition:
+Neutral, Enthusiastic, Curious, Focused, Reflective, Frustrated, Meticulous, Excited, Tired.
 Reply with only the single label word, nothing else.
 
 Exchange:
-${recentExchange.take(1200)}"""
+${recentExchange.take(2000)}"""
                 )
             ),
             stream = false
         )
         val raw = api.chatOnce(baseUrl, request)?.trim() ?: return null
-        val allowed = setOf("Neutral", "Enthusiastic", "Frustrated", "Meticulous", "Focused", "Curious")
+        val allowed = setOf("Neutral", "Enthusiastic", "Curious", "Focused", "Reflective", "Frustrated", "Meticulous", "Excited", "Tired")
         allowed.firstOrNull { it.equals(raw, ignoreCase = true) }
     } catch (e: Exception) {
         Log.w(TAG, "calculateMood failed: ${e.message}")

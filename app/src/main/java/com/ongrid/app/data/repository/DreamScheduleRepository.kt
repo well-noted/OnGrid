@@ -14,4 +14,6 @@ class DreamScheduleRepository(private val dao: DreamScheduleDao) {
     suspend fun deleteSchedule(id: String) = dao.deleteById(id)
 
     suspend fun setEnabled(id: String, enabled: Boolean) = dao.setEnabled(id, enabled)
+
+    suspend fun getScheduleById(id: String): DreamScheduleEntity? = dao.getById(id)
 }

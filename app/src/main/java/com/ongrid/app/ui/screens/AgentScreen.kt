@@ -33,6 +33,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
@@ -43,6 +44,7 @@ import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.filled.PushPin
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.SmartToy
 import androidx.compose.material3.Button
@@ -168,6 +170,8 @@ fun AgentScreen(
     var showModelPickerForTalk by remember { mutableStateOf(false) }
     var showCognitionSheet by remember { mutableStateOf(false) }
     var showSchedulerSheet by remember { mutableStateOf(false) }
+    var showColorPicker by remember { mutableStateOf(false) }
+    var showAvatarPicker by remember { mutableStateOf(false) }
 
     // Collapsible card states
     var briefExpanded by remember { mutableStateOf(true) }
@@ -232,7 +236,9 @@ fun AgentScreen(
                             showModelPickerForTalk = true
                         }
                     },
-                    onCognitionSettings = { showCognitionSheet = true }
+                    onCognitionSettings = { showCognitionSheet = true },
+                    onChangeColor = { showColorPicker = true },
+                    onChangeAvatarIcon = { showAvatarPicker = true }
                 )
             }
 
@@ -487,6 +493,31 @@ fun AgentScreen(
         )
     }
 
+    // ── Color Picker Sheet ────────────────────────────────────────────────────
+    if (showColorPicker) {
+        AgentColorPickerSheet(
+            currentColor = currentAgent.color,
+            onDismiss = { showColorPicker = false },
+            onColorSelected = { color ->
+                viewModel.updateColor(currentAgent.id, color)
+                showColorPicker = false
+            }
+        )
+    }
+
+    // ── Avatar Icon Picker Sheet ──────────────────────────────────────────────
+    if (showAvatarPicker) {
+        AgentAvatarPickerSheet(
+            currentIcon = currentAgent.avatarIcon,
+            agentColor = currentAgent.color,
+            onDismiss = { showAvatarPicker = false },
+            onIconSelected = { icon ->
+                viewModel.updateAvatarIcon(currentAgent.id, icon)
+                showAvatarPicker = false
+            }
+        )
+    }
+
     // ── Cognition Settings Sheet ──────────────────────────────────────────────
     if (showCognitionSheet) {
         CognitionSettingsSheet(
@@ -574,7 +605,9 @@ private fun AgentIdentityCard(
     onStatusSelected: (AgentStatus) -> Unit,
     onDismissStatusMenu: () -> Unit,
     onTalkClick: () -> Unit,
-    onCognitionSettings: () -> Unit
+    onCognitionSettings: () -> Unit,
+    onChangeColor: () -> Unit,
+    onChangeAvatarIcon: () -> Unit
 ) {
     val seedColor = if (agent.color != 0) Color(agent.color) else MaterialTheme.colorScheme.primary
 
@@ -590,50 +623,63 @@ private fun AgentIdentityCard(
                 .fillMaxWidth()
                 .padding(16.dp)
         ) {
-            // Name — inline edit
-            var editingName by remember { mutableStateOf(false) }
-            var nameText by remember(agent.name) { mutableStateOf(agent.name) }
-            val nameFocusRequester = remember { FocusRequester() }
+            // ── Header row: name/mood on left, avatar on right ────────────────
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.Top
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    // Name — inline edit
+                    var editingName by remember { mutableStateOf(false) }
+                    var nameText by remember(agent.name) { mutableStateOf(agent.name) }
+                    val nameFocusRequester = remember { FocusRequester() }
 
-            if (editingName) {
-                var nameHadFocus by remember { mutableStateOf(false) }
-                androidx.compose.foundation.text.BasicTextField(
-                    value = nameText,
-                    onValueChange = { nameText = it },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .focusRequester(nameFocusRequester)
-                        .onFocusChanged {
-                            if (it.isFocused) { nameHadFocus = true }
-                            else if (nameHadFocus && editingName) {
-                                onNameChange(nameText)
-                                editingName = false
-                            }
-                        },
-                    textStyle = MaterialTheme.typography.headlineSmall.copy(
-                        color = MaterialTheme.colorScheme.onSurface,
-                        fontWeight = FontWeight.Bold
-                    ),
-                    singleLine = true
-                )
-                LaunchedEffect(Unit) { nameFocusRequester.requestFocus() }
-            } else {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        text = agent.name,
-                        style = MaterialTheme.typography.headlineSmall,
-                        fontWeight = FontWeight.Bold,
-                        modifier = Modifier
-                            .clickable { editingName = true }
-                    )
-                    if (agent.isMoodTrackingEnabled && agent.currentMood.isNotBlank() && agent.currentMood != "Neutral") {
-                        Spacer(Modifier.width(8.dp))
+                    if (editingName) {
+                        var nameHadFocus by remember { mutableStateOf(false) }
+                        androidx.compose.foundation.text.BasicTextField(
+                            value = nameText,
+                            onValueChange = { nameText = it },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .focusRequester(nameFocusRequester)
+                                .onFocusChanged {
+                                    if (it.isFocused) { nameHadFocus = true }
+                                    else if (nameHadFocus && editingName) {
+                                        onNameChange(nameText)
+                                        editingName = false
+                                    }
+                                },
+                            textStyle = MaterialTheme.typography.headlineSmall.copy(
+                                color = MaterialTheme.colorScheme.onSurface,
+                                fontWeight = FontWeight.Bold
+                            ),
+                            singleLine = true
+                        )
+                        LaunchedEffect(Unit) { nameFocusRequester.requestFocus() }
+                    } else {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                text = agent.name,
+                                style = MaterialTheme.typography.headlineSmall,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.clickable { editingName = true }
+                            )
+                        }
+                    }
+
+                    Spacer(Modifier.height(2.dp))
+
+                    // Mood pill — always visible when mood tracking is enabled
+                    if (agent.isMoodTrackingEnabled) {
+                        val moodEmoji = moodEmoji(agent.currentMood)
                         Surface(
                             shape = RoundedCornerShape(8.dp),
-                            color = seedColor.copy(alpha = 0.18f)
+                            color = seedColor.copy(alpha = 0.18f),
+                            modifier = Modifier.padding(top = 2.dp)
                         ) {
                             Text(
-                                text = agent.currentMood,
+                                text = "$moodEmoji ${agent.currentMood}",
                                 style = MaterialTheme.typography.labelSmall,
                                 modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp),
                                 color = seedColor
@@ -641,9 +687,39 @@ private fun AgentIdentityCard(
                         }
                     }
                 }
+
+                // Avatar — tappable to change icon; color ring tappable to change color
+                Spacer(Modifier.width(12.dp))
+                Box(contentAlignment = Alignment.BottomEnd) {
+                    Box(
+                        modifier = Modifier
+                            .size(52.dp)
+                            .clip(CircleShape)
+                            .background(seedColor.copy(alpha = 0.20f))
+                            .border(2.dp, seedColor.copy(alpha = 0.5f), CircleShape)
+                            .clickable(onClick = onChangeAvatarIcon),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = agentAvatarIcon(agent.avatarIcon),
+                            contentDescription = "Avatar",
+                            tint = seedColor,
+                            modifier = Modifier.size(26.dp)
+                        )
+                    }
+                    // Small color swatch in corner of avatar — tap to change color
+                    Box(
+                        modifier = Modifier
+                            .size(16.dp)
+                            .clip(CircleShape)
+                            .background(seedColor)
+                            .border(1.5.dp, MaterialTheme.colorScheme.surface, CircleShape)
+                            .clickable(onClick = onChangeColor)
+                    )
+                }
             }
 
-            Spacer(Modifier.height(4.dp))
+            Spacer(Modifier.height(8.dp))
 
             // Role — inline edit
             var editingRole by remember { mutableStateOf(false) }
@@ -760,6 +836,173 @@ private fun AgentIdentityCard(
                     color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
                     modifier = Modifier.align(Alignment.CenterHorizontally).padding(top = 4.dp)
                 )
+            }
+        }
+    }
+}
+
+// ── Agent avatar icon helpers ─────────────────────────────────────────────────
+
+private val AGENT_AVATAR_OPTIONS = listOf(
+    "psychology" to androidx.compose.material.icons.Icons.Default.Psychology,
+    "smart_toy" to androidx.compose.material.icons.Icons.Default.SmartToy,
+    "auto_awesome" to androidx.compose.material.icons.Icons.Default.AutoAwesome,
+    "settings" to androidx.compose.material.icons.Icons.Default.Settings,
+    "edit" to androidx.compose.material.icons.Icons.Default.Edit,
+    "search" to androidx.compose.material.icons.Icons.Default.Search,
+    "history" to androidx.compose.material.icons.Icons.Default.History,
+    "build" to androidx.compose.material.icons.Icons.Default.Build,
+    "check" to androidx.compose.material.icons.Icons.Default.Check,
+    "push_pin" to androidx.compose.material.icons.Icons.Default.PushPin,
+)
+
+private fun agentAvatarIcon(key: String): androidx.compose.ui.graphics.vector.ImageVector =
+    AGENT_AVATAR_OPTIONS.firstOrNull { it.first == key }?.second
+        ?: androidx.compose.material.icons.Icons.Default.Psychology
+
+private fun moodEmoji(mood: String): String = when (mood.lowercase()) {
+    "curious" -> "🤔"
+    "enthusiastic", "excited" -> "✨"
+    "focused" -> "🎯"
+    "reflective" -> "💭"
+    "tired", "fatigued" -> "😴"
+    "anxious", "nervous" -> "😬"
+    "happy", "joyful" -> "😊"
+    "frustrated" -> "😤"
+    "meticulous" -> "🔍"
+    "neutral" -> "😐"
+    else -> "💬"
+}
+
+// ── Agent Color Picker Sheet ──────────────────────────────────────────────────
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun AgentColorPickerSheet(
+    currentColor: Int,
+    onDismiss: () -> Unit,
+    onColorSelected: (Int) -> Unit
+) {
+    val palette = listOf(
+        Color(0xFF1A73E8), Color(0xFF00897B), Color(0xFF8E24AA), Color(0xFFE53935),
+        Color(0xFFF4511E), Color(0xFFF6BF26), Color(0xFF33B679), Color(0xFF039BE5),
+        Color(0xFF616161), Color(0xFF3F51B5), Color(0xFFD81B60), Color(0xFF0B8043),
+        Color(0xFFAD1457), Color(0xFF6D4C41), Color(0xFF546E7A), Color(0xFFFF7043),
+    )
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp)
+                .padding(bottom = 32.dp)
+        ) {
+            Text("Agent Color", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            Spacer(Modifier.height(4.dp))
+            Text(
+                "Used for the avatar ring, card tint, and chat bubble accent.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(Modifier.height(16.dp))
+            val rows = palette.chunked(4)
+            rows.forEach { row ->
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.padding(bottom = 12.dp)) {
+                    row.forEach { color ->
+                        val isSelected = currentColor != 0 && Color(currentColor) == color
+                        Box(
+                            modifier = Modifier
+                                .size(48.dp)
+                                .clip(CircleShape)
+                                .background(color)
+                                .then(
+                                    if (isSelected) Modifier.border(3.dp, MaterialTheme.colorScheme.onSurface, CircleShape)
+                                    else Modifier
+                                )
+                                .clickable { onColorSelected(color.toArgb()) },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            if (isSelected) {
+                                Icon(
+                                    Icons.Default.Check,
+                                    contentDescription = null,
+                                    tint = if (color.luminance() > 0.5f) Color.Black else Color.White,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ── Agent Avatar Icon Picker Sheet ────────────────────────────────────────────
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun AgentAvatarPickerSheet(
+    currentIcon: String,
+    agentColor: Int,
+    onDismiss: () -> Unit,
+    onIconSelected: (String) -> Unit
+) {
+    val seedColor = if (agentColor != 0) Color(agentColor) else MaterialTheme.colorScheme.primary
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp)
+                .padding(bottom = 32.dp)
+        ) {
+            Text("Agent Avatar", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            Spacer(Modifier.height(4.dp))
+            Text(
+                "Choose an icon to represent this agent.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(Modifier.height(16.dp))
+            val rows = AGENT_AVATAR_OPTIONS.chunked(5)
+            rows.forEach { row ->
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    modifier = Modifier.padding(bottom = 12.dp)
+                ) {
+                    row.forEach { (key, icon) ->
+                        val isSelected = currentIcon == key || (currentIcon.isBlank() && key == "psychology")
+                        Box(
+                            modifier = Modifier
+                                .size(52.dp)
+                                .clip(CircleShape)
+                                .background(
+                                    if (isSelected) seedColor.copy(alpha = 0.25f)
+                                    else MaterialTheme.colorScheme.surfaceVariant
+                                )
+                                .then(
+                                    if (isSelected) Modifier.border(2.dp, seedColor, CircleShape)
+                                    else Modifier
+                                )
+                                .clickable { onIconSelected(key) },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = icon,
+                                contentDescription = key,
+                                tint = if (isSelected) seedColor else MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(24.dp)
+                            )
+                        }
+                    }
+                }
             }
         }
     }

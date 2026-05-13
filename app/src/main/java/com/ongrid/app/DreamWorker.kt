@@ -4,6 +4,7 @@ import android.content.Context
 import android.util.Log
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
+import androidx.work.workDataOf
 import com.google.gson.Gson
 import com.ongrid.app.data.local.DreamLogEntity
 import kotlinx.coroutines.flow.first
@@ -33,10 +34,6 @@ class DreamWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
     override suspend fun doWork(): Result {
         Log.d(TAG, "Dream cycle starting")
 
-        val agents = app.agentRepository.allAgents().first()
-        val dreamingAgents = agents.filter { it.isDreamingEnabled }
-        if (dreamingAgents.isEmpty()) return Result.success()
-
         val settings = app.settingsRepository.settings.first()
         if (!settings.utilityAgentEnabled) {
             Log.d(TAG, "Utility agent disabled globally — skipping dream cycle")
@@ -48,6 +45,23 @@ class DreamWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
             append(" | Agent: ")
             append(settings.utilityModelName.ifBlank { "—" })
         }
+
+        // If a specific agentId was provided (scheduled or manual trigger), only dream
+        // that agent. Otherwise fall back to all agents with dreaming enabled (periodic run).
+        val scopedAgentId = inputData.getString(INPUT_KEY_AGENT_ID)
+        val dreamingAgents = if (scopedAgentId != null) {
+            val agent = app.agentRepository.getAgent(scopedAgentId)
+            if (agent == null || !agent.isDreamingEnabled) {
+                Log.d(TAG, "Agent $scopedAgentId not found or dreaming disabled — skipping")
+                return Result.success()
+            }
+            listOf(agent)
+        } else {
+            val all = app.agentRepository.allAgents().first()
+            all.filter { it.isDreamingEnabled }
+        }
+
+        if (dreamingAgents.isEmpty()) return Result.success()
 
         for (agent in dreamingAgents) {
             DreamNotificationHelper.notify(
@@ -206,5 +220,10 @@ class DreamWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
         app.agentRepository.updateLastDreamedAt(agentId, System.currentTimeMillis())
         emitLog("✓ ${agent.name}: $summary")
         Log.d(TAG, "Dream complete for ${agent.name}: $summary")
+    }
+
+    companion object {
+        /** Optional WorkManager input key. When set, only that agent's dream runs. */
+        const val INPUT_KEY_AGENT_ID = "agent_id"
     }
 }

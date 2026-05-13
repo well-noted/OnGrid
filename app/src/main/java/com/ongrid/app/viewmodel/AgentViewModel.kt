@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import androidx.work.Constraints
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
+import androidx.work.workDataOf
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import com.ongrid.app.DreamWorker
@@ -136,6 +137,10 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         syncShortcuts()
     }
 
+    fun updateAvatarIcon(agentId: String, icon: String) = viewModelScope.launch {
+        agentRepo.updateAvatarIcon(agentId, icon)
+    }
+
     fun updateUtilityModel(agentId: String, host: String, model: String) = viewModelScope.launch {
         agentRepo.updateUtilityModel(agentId, host, model)
     }
@@ -221,9 +226,11 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
      * request is enqueued (actual work runs off the UI thread via WorkManager).
      */
     fun triggerDreamNow() {
+        val agentId = _selectedAgentId.value ?: return
         _isDreaming.value = true
         val request = OneTimeWorkRequestBuilder<DreamWorker>()
             .setConstraints(Constraints.Builder().setRequiresBatteryNotLow(false).build())
+            .setInputData(workDataOf(DreamWorker.INPUT_KEY_AGENT_ID to agentId))
             .addTag(DREAM_NOW_TAG)
             .build()
         WorkManager.getInstance(app).enqueue(request)

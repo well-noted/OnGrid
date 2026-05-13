@@ -27,4 +27,7 @@ interface DreamScheduleDao {
 
     @Query("UPDATE dream_schedules SET isEnabled = :enabled WHERE id = :id")
     suspend fun setEnabled(id: String, enabled: Boolean)
+
+    @Query("SELECT * FROM dream_schedules WHERE id = :id LIMIT 1")
+    suspend fun getById(id: String): DreamScheduleEntity?
 }

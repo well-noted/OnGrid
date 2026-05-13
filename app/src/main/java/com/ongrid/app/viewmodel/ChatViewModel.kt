@@ -551,7 +551,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                                 }
                             }
 
-                            // Agent brief update and memory extraction
+                            // Agent brief update, memory extraction, and mood tracking
                             val currentAgentId = _uiState.value.currentAgentId
                             val currentAgent = _uiState.value.currentAgent
                             if (currentAgentId != null && currentAgent != null) {
@@ -561,23 +561,42 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                                 val currentBrief = currentAgent.brief
                                 val existingMemories = _uiState.value.agentMemories
                                     .map { it.content }
+                                // Richer exchange for mood — captures more assistant content
+                                val moodExchange = buildString {
+                                    append("User: ${userMsg.content.take(600)}")
+                                    val assistantFull = finalMsg?.content?.take(800) ?: ""
+                                    if (assistantFull.isNotBlank()) append("\nAssistant: $assistantFull")
+                                }
 
-                                // Run brief update and memory extraction in parallel
+                                // Run brief update, memory extraction, and mood in parallel
                                 viewModelScope.launch {
-                                    val briefDeferred = viewModelScope.async {
-                                        utilityAgentRepo.updateAgentBrief(
-                                            postUtilityBase, postUtilityModel,
-                                            currentBrief, agentRole, agentPrompt, agentExchange
-                                        )
-                                    }
+                                    val briefDeferred = if (currentAgent.isAutoBriefEnabled) {
+                                        viewModelScope.async {
+                                            utilityAgentRepo.updateAgentBrief(
+                                                postUtilityBase, postUtilityModel,
+                                                currentBrief, agentRole, agentPrompt, agentExchange
+                                            )
+                                        }
+                                    } else null
+
                                     val memoriesDeferred = viewModelScope.async {
                                         utilityAgentRepo.extractAgentMemories(
                                             postUtilityBase, postUtilityModel,
                                             agentRole, agentExchange, existingMemories
                                         )
                                     }
-                                    val newBrief = briefDeferred.await()
+
+                                    val moodDeferred = if (currentAgent.isMoodTrackingEnabled) {
+                                        viewModelScope.async {
+                                            utilityAgentRepo.calculateMood(
+                                                postUtilityBase, postUtilityModel, moodExchange
+                                            )
+                                        }
+                                    } else null
+
+                                    val newBrief = briefDeferred?.await()
                                     val newMemories = memoriesDeferred.await()
+                                    val newMood = moodDeferred?.await()
 
                                     if (!newBrief.isNullOrBlank()) {
                                         agentRepo.updateBrief(currentAgentId, newBrief)
@@ -591,7 +610,10 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                                             )
                                         )
                                     }
-                                    if (!newBrief.isNullOrBlank() || newMemories.isNotEmpty()) {
+                                    if (!newMood.isNullOrBlank() && newMood != currentAgent.currentMood) {
+                                        agentRepo.updateMood(currentAgentId, newMood)
+                                    }
+                                    if (!newBrief.isNullOrBlank() || newMemories.isNotEmpty() || !newMood.isNullOrBlank()) {
                                         loadAgent(currentAgentId)
                                     }
                                 }

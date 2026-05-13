@@ -18,6 +18,7 @@ data class AgentEntity(
     val defaultSkillIds: String = "[]",
     val defaultDisabledToolNames: String = "[]",
     val color: Int = 0,
+    val avatarIcon: String = "",
     val utilityModelHost: String = "",
     val utilityModelName: String = "",
     val retiredAt: Long? = null,

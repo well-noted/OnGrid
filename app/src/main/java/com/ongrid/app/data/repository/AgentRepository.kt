@@ -42,6 +42,7 @@ class AgentRepository(
     }
 
     suspend fun updateColor(agentId: String, color: Int) { agentDao.updateColor(agentId, color) }
+    suspend fun updateAvatarIcon(agentId: String, icon: String) { agentDao.updateAvatarIcon(agentId, icon) }
     suspend fun updateUtilityModel(agentId: String, host: String, model: String) { agentDao.updateUtilityModel(agentId, host, model) }
     suspend fun setDefaultSkills(agentId: String, skillIds: List<String>) { agentDao.updateDefaultSkills(agentId, gson.toJson(skillIds)) }
     suspend fun setDefaultDisabledTools(agentId: String, toolNames: List<String>) { agentDao.updateDefaultDisabledTools(agentId, gson.toJson(toolNames)) }
