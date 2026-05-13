@@ -92,6 +92,7 @@ import androidx.compose.ui.unit.dp
 import com.mikepenz.markdown.m3.Markdown
 import com.mikepenz.markdown.m3.markdownColor
 import com.mikepenz.markdown.m3.markdownTypography
+import com.mikepenz.markdown.model.markdownPadding
 import com.ongrid.app.data.model.ChatMessage
 import com.ongrid.app.data.model.MessageRole
 import com.ongrid.app.ui.theme.AssistantBubble
@@ -1093,8 +1094,10 @@ private fun MessageBubble(
                                 ),
                                 typography = markdownTypography(
                                     text = MaterialTheme.typography.bodyMedium,
+                                    paragraph = MaterialTheme.typography.bodyMedium,
                                     code = MaterialTheme.typography.bodySmall,
                                 ),
+                                padding = markdownPadding(block = 8.dp),
                             )
                         } else {
                             Text(
