@@ -133,6 +133,7 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
 
     fun updateColor(agentId: String, color: Int) = viewModelScope.launch {
         agentRepo.updateColor(agentId, color)
+        syncShortcuts()
     }
 
     fun updateUtilityModel(agentId: String, host: String, model: String) = viewModelScope.launch {
@@ -227,8 +228,7 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun syncShortcuts() {
         viewModelScope.launch {
-            val agents = agentRepo.allAgents().stateIn(viewModelScope).value
-            app.agentShortcutManager.sync(agents)
+            app.agentShortcutManager.sync(allAgents.value)
         }
     }
 
