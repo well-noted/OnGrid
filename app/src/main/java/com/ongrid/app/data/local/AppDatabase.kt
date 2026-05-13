@@ -6,8 +6,8 @@ import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
 @Database(
-    entities = [ProjectEntity::class, ConversationEntity::class, MessageEntity::class, SavedServerEntity::class, SkillEntity::class, ProjectMemoryEntity::class, AgentEntity::class, AgentMemoryEntity::class],
-    version = 7,
+    entities = [ProjectEntity::class, ConversationEntity::class, MessageEntity::class, SavedServerEntity::class, SkillEntity::class, ProjectMemoryEntity::class, AgentEntity::class, AgentMemoryEntity::class, DreamLogEntity::class],
+    version = 8,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -19,6 +19,34 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun projectMemoryDao(): ProjectMemoryDao
     abstract fun agentDao(): AgentDao
     abstract fun agentMemoryDao(): AgentMemoryDao
+    abstract fun dreamLogDao(): DreamLogDao
+}
+
+val MIGRATION_7_8 = object : Migration(7, 8) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        // Phase 2 cognition fields on agents
+        db.execSQL("ALTER TABLE agents ADD COLUMN isDreamingEnabled INTEGER NOT NULL DEFAULT 1")
+        db.execSQL("ALTER TABLE agents ADD COLUMN isMoodTrackingEnabled INTEGER NOT NULL DEFAULT 0")
+        db.execSQL("ALTER TABLE agents ADD COLUMN isAutoBriefEnabled INTEGER NOT NULL DEFAULT 1")
+        db.execSQL("ALTER TABLE agents ADD COLUMN maxContextTokens INTEGER NOT NULL DEFAULT 4096")
+        db.execSQL("ALTER TABLE agents ADD COLUMN currentMood TEXT NOT NULL DEFAULT 'Neutral'")
+        db.execSQL("ALTER TABLE agents ADD COLUMN lastDreamedAt INTEGER NOT NULL DEFAULT 0")
+
+        // Dream logs table
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS dream_logs (
+                id TEXT PRIMARY KEY NOT NULL,
+                agentId TEXT NOT NULL,
+                timestamp INTEGER NOT NULL,
+                summary TEXT NOT NULL,
+                fullLogJson TEXT NOT NULL,
+                moodChange TEXT
+            )
+            """.trimIndent()
+        )
+        db.execSQL("CREATE INDEX IF NOT EXISTS index_dream_logs_agentId ON dream_logs(agentId)")
+    }
 }
 
 val MIGRATION_3_4 = object : Migration(3, 4) {

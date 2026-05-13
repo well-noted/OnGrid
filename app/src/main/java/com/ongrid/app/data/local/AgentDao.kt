@@ -53,4 +53,22 @@ interface AgentDao {
 
     @Query("UPDATE agents SET color = :color WHERE id = :id")
     suspend fun updateColor(id: String, color: Int)
+
+    @Query("UPDATE agents SET isDreamingEnabled = :enabled WHERE id = :id")
+    suspend fun updateDreamingEnabled(id: String, enabled: Boolean)
+
+    @Query("UPDATE agents SET isMoodTrackingEnabled = :enabled WHERE id = :id")
+    suspend fun updateMoodTrackingEnabled(id: String, enabled: Boolean)
+
+    @Query("UPDATE agents SET isAutoBriefEnabled = :enabled WHERE id = :id")
+    suspend fun updateAutoBriefEnabled(id: String, enabled: Boolean)
+
+    @Query("UPDATE agents SET maxContextTokens = :tokens WHERE id = :id")
+    suspend fun updateMaxContextTokens(id: String, tokens: Int)
+
+    @Query("UPDATE agents SET currentMood = :mood WHERE id = :id")
+    suspend fun updateMood(id: String, mood: String)
+
+    @Query("UPDATE agents SET lastDreamedAt = :timestamp WHERE id = :id")
+    suspend fun updateLastDreamedAt(id: String, timestamp: Long)
 }

@@ -3,13 +3,18 @@ package com.ongrid.app.viewmodel
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import androidx.work.Constraints
+import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.WorkManager
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
+import com.ongrid.app.DreamWorker
 import com.ongrid.app.OnGridApplication
 import com.ongrid.app.data.local.AgentEntity
 import com.ongrid.app.data.local.AgentMemoryEntity
 import com.ongrid.app.data.local.AgentStatus
 import com.ongrid.app.data.local.ConversationEntity
+import com.ongrid.app.data.local.DreamLogEntity
 import com.ongrid.app.data.local.SavedServerEntity
 import com.ongrid.app.data.local.SkillEntity
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -60,6 +65,17 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
             if (id == null) flowOf(emptyList())
             else app.conversationRepository.conversationsForAgent(id)
         }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    /** Dream journal entries for the currently selected agent. */
+    val dreamLogs: StateFlow<List<DreamLogEntity>> =
+        _selectedAgentId.flatMapLatest { id ->
+            if (id == null) flowOf(emptyList())
+            else agentRepo.dreamLogsForAgent(id)
+        }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    /** True while a manual Dream Now operation is in progress. */
+    private val _isDreaming = MutableStateFlow(false)
+    val isDreaming: StateFlow<Boolean> = _isDreaming.asStateFlow()
 
     fun selectAgent(agentId: String) {
         _selectedAgentId.value = agentId
@@ -154,6 +170,43 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         )
     }
 
+    // ── Phase 2: Cognition Settings ────────────────────────────────────────
+
+    fun saveCognitionSettings(
+        agentId: String,
+        isDreamingEnabled: Boolean,
+        isMoodTrackingEnabled: Boolean,
+        isAutoBriefEnabled: Boolean,
+        maxContextTokens: Int
+    ) = viewModelScope.launch {
+        agentRepo.updateCognitionSettings(
+            agentId, isDreamingEnabled, isMoodTrackingEnabled, isAutoBriefEnabled, maxContextTokens
+        )
+    }
+
+    fun resetMood(agentId: String) = viewModelScope.launch {
+        agentRepo.resetMood(agentId)
+    }
+
+    /**
+     * Schedule a one-time DreamWorker to run immediately ("Dream Now" manual trigger).
+     * The [isDreaming] state is updated optimistically and reset once the WorkManager
+     * request is enqueued (actual work runs off the UI thread via WorkManager).
+     */
+    fun triggerDreamNow() {
+        _isDreaming.value = true
+        val request = OneTimeWorkRequestBuilder<DreamWorker>()
+            .setConstraints(Constraints.Builder().setRequiresBatteryNotLow(false).build())
+            .addTag(DREAM_NOW_TAG)
+            .build()
+        WorkManager.getInstance(app).enqueue(request)
+        // Reset indicator after a short delay so the button feels responsive
+        viewModelScope.launch {
+            kotlinx.coroutines.delay(2000)
+            _isDreaming.value = false
+        }
+    }
+
     private fun syncShortcuts() {
         viewModelScope.launch {
             val agents = agentRepo.allAgents().stateIn(viewModelScope).value
@@ -166,4 +219,9 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
 
     /** Parse a JSON disabled tool names array stored in the agent entity. */
     fun parseDisabledTools(json: String): List<String> = agentRepo.parseDisabledTools(json)
+
+    companion object {
+        private const val DREAM_NOW_TAG = "dream_now_manual"
+    }
 }
+

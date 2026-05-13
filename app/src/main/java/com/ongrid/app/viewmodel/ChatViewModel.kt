@@ -303,7 +303,16 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         // Drain any leftover events from a previous (completed or cancelled) request.
         while (true) { app.chatServiceChannel.tryReceive().getOrNull() ?: break }
 
-        app.pendingChatRequest = PendingChatRequest(assistantMsgId, server.baseUrl, request)
+        app.pendingChatRequest = PendingChatRequest(
+            assistantMsgId = assistantMsgId,
+            baseUrl = server.baseUrl,
+            request = request,
+            agentId = _uiState.value.currentAgentId,
+            agentName = _uiState.value.currentAgent?.name,
+            agentMood = _uiState.value.currentAgent
+                ?.takeIf { it.isMoodTrackingEnabled }
+                ?.currentMood
+        )
         _uiState.value = _uiState.value.copy(isLoading = true, error = null)
 
         // *** Must be called here — synchronously on the main thread — before we ever suspend. ***
@@ -815,11 +824,22 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
         val agent = _uiState.value.currentAgent
         val agentMemories = _uiState.value.agentMemories
+        val tokenBudget = agent?.maxContextTokens
 
         // Build injected context messages (1–3 from spec)
         val injected = mutableListOf<OllamaChatMessage>()
 
         if (agent != null) {
+            // Mood injection — prepend before the system prompt when mood tracking is on
+            if (agent.isMoodTrackingEnabled && agent.currentMood.isNotBlank()) {
+                val toneInstruction = moodToneInstruction(agent.currentMood)
+                val moodContent = buildString {
+                    append("Your current disposition is ${agent.currentMood}.")
+                    if (toneInstruction.isNotBlank()) append(" $toneInstruction")
+                }
+                injected += OllamaChatMessage(role = "system", content = moodContent)
+            }
+
             // 1. Agent system prompt (replaces global system prompt if set)
             if (agent.systemPrompt.isNotBlank()) {
                 injected += OllamaChatMessage(role = "system", content = agent.systemPrompt)
@@ -838,11 +858,27 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 )
             }
 
-            // 3. Agent memories — pinned first, then recent, capped at 10
-            val capped = (agentMemories.filter { it.isPinned } +
-                    agentMemories.filter { !it.isPinned }).take(10)
-            if (capped.isNotEmpty()) {
-                val bullet = capped.joinToString("\n") { "• ${it.content}" }
+            // 3. Agent memories — pinned first, then recent.
+            //    If a token budget is set, drop oldest non-pinned memories until we fit.
+            val pinned = agentMemories.filter { it.isPinned }
+            val unpinned = agentMemories.filter { !it.isPinned }
+            val budgetedMemories = if (tokenBudget != null && tokenBudget > 0) {
+                val fixed = injected.sumOf { (it.content?.length ?: 0) / 4 }
+                val pinnedTokens = pinned.sumOf { it.content.length / 4 }
+                var remaining = tokenBudget - fixed - pinnedTokens
+                val trimmedUnpinned = mutableListOf<com.ongrid.app.data.local.AgentMemoryEntity>()
+                for (mem in unpinned.reversed()) {           // keep most-recent first
+                    val cost = mem.content.length / 4
+                    if (remaining >= cost) { trimmedUnpinned.add(0, mem); remaining -= cost }
+                    // else drop this memory to stay within budget
+                }
+                pinned + trimmedUnpinned
+            } else {
+                (pinned + unpinned).take(10)
+            }
+
+            if (budgetedMemories.isNotEmpty()) {
+                val bullet = budgetedMemories.joinToString("\n") { "• ${it.content}" }
                 injected += OllamaChatMessage(
                     role = "system",
                     content = "What you remember from previous conversations:\n$bullet"
@@ -878,6 +914,16 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         return injected + memoryMessages + skillMessages + conversationMessages
+    }
+
+    /** Maps a mood label to a brief tonal instruction injected with the mood preamble. */
+    private fun moodToneInstruction(mood: String): String = when (mood.lowercase()) {
+        "enthusiastic" -> "Bring energy and enthusiasm to your responses."
+        "frustrated"   -> "Be patient, methodical, and reassuring."
+        "meticulous"   -> "Pay meticulous attention to detail and precision."
+        "focused"      -> "Maintain laser focus on the task at hand."
+        "curious"      -> "Engage with curiosity and explore ideas thoroughly."
+        else           -> ""
     }
 
     private fun updateStreamingMessage(id: String, content: String) {

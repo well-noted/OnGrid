@@ -9,6 +9,7 @@ import android.content.Intent
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
 import androidx.core.app.Person
+import com.ongrid.app.data.local.AgentStatus
 import com.ongrid.app.data.model.ChatMessage
 import com.ongrid.app.data.model.McpInputSchema
 import com.ongrid.app.data.model.MessageRole
@@ -149,7 +150,7 @@ class ChatForegroundService : Service() {
                         )
                     )
                     if (!app.isAppForegrounded) {
-                        postCompletionNotification(accumulated.toString())
+                        postCompletionNotification(accumulated.toString(), pending)
                     }
                     break
                 }
@@ -321,7 +322,7 @@ class ChatForegroundService : Service() {
         }
     }
 
-    private fun postCompletionNotification(content: String) {
+    private fun postCompletionNotification(content: String, pending: PendingChatRequest) {
         val openIntent = Intent(this, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
         }
@@ -329,18 +330,43 @@ class ChatForegroundService : Service() {
             this, 0, openIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
-        val aiPerson = Person.Builder().setName("AI").build()
+
+        // Build an agent-specific Person so Android groups the notification as a "Conversation".
+        val personName = pending.agentName ?: "AI"
+        val aiPerson = Person.Builder()
+            .setName(personName)
+            .setKey(pending.agentId ?: "ai_default")
+            .setImportant(pending.agentId != null)
+            .build()
+
         val preview = if (content.length > 200) content.take(200) + "…" else content
         val style = NotificationCompat.MessagingStyle(aiPerson)
+            .setConversationTitle(if (pending.agentId != null) personName else null)
+            .setGroupConversation(pending.agentId != null)
             .addMessage(preview, System.currentTimeMillis(), aiPerson)
-        val notification = NotificationCompat.Builder(this, COMPLETE_CHANNEL_ID)
+
+        val moodSubText = pending.agentMood
+            ?.takeIf { it.isNotBlank() && it != "Neutral" }
+            ?.let { "Mood: $it" }
+
+        // Unique notification ID per agent so each agent has its own conversation entry.
+        val notifId = pending.agentId?.hashCode()?.let { COMPLETE_NOTIFICATION_ID + (it and 0xFFFF) }
+            ?: COMPLETE_NOTIFICATION_ID
+
+        val builder = NotificationCompat.Builder(this, COMPLETE_CHANNEL_ID)
             .setStyle(style)
             .setSmallIcon(R.mipmap.ic_launcher)
             .setContentIntent(pendingIntent)
             .setAutoCancel(true)
-            .build()
-        getSystemService(NotificationManager::class.java)
-            .notify(COMPLETE_NOTIFICATION_ID, notification)
+            .setCategory(NotificationCompat.CATEGORY_MESSAGE)
+
+        if (moodSubText != null) builder.setSubText(moodSubText)
+
+        // Associate with the agent's dynamic shortcut so Android promotes it to the
+        // "Conversations" section of the notification shade (Android 11+).
+        pending.agentId?.let { builder.setShortcutId("agent_$it") }
+
+        getSystemService(NotificationManager::class.java).notify(notifId, builder.build())
     }
 
     private fun buildNotification(): Notification =

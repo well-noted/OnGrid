@@ -11,10 +11,15 @@ import com.ongrid.app.data.network.OllamaApi
 import com.ongrid.app.data.network.McpApi
 import com.ongrid.app.data.network.NetworkScanner
 import com.ongrid.app.data.network.WebSearchApi
+import androidx.work.Constraints
+import androidx.work.ExistingPeriodicWorkPolicy
+import androidx.work.PeriodicWorkRequestBuilder
+import androidx.work.WorkManager
 import com.ongrid.app.data.local.MIGRATION_3_4
 import com.ongrid.app.data.local.MIGRATION_4_5
 import com.ongrid.app.data.local.MIGRATION_5_6
 import com.ongrid.app.data.local.MIGRATION_6_7
+import com.ongrid.app.data.local.MIGRATION_7_8
 import com.ongrid.app.data.repository.AgentRepository
 import com.ongrid.app.data.repository.ConversationRepository
 import com.ongrid.app.data.repository.McpRepository
@@ -35,7 +40,13 @@ import java.util.concurrent.TimeUnit
 data class PendingChatRequest(
     val assistantMsgId: String,
     val baseUrl: String,
-    val request: OllamaChatRequest
+    val request: OllamaChatRequest,
+    /** Agent ID used to group notifications by conversation. */
+    val agentId: String? = null,
+    /** Agent display name for the MessagingStyle Person. */
+    val agentName: String? = null,
+    /** Current mood prepended as a tonal hint in the reply notification subtext. */
+    val agentMood: String? = null
 )
 
 /**
@@ -74,6 +85,16 @@ class OnGridApplication : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        // Schedule periodic Dream Cycle (every 6 hours, only when battery is not low)
+        val dreamRequest = PeriodicWorkRequestBuilder<DreamWorker>(6, TimeUnit.HOURS)
+            .setConstraints(Constraints.Builder().setRequiresBatteryNotLow(true).build())
+            .build()
+        WorkManager.getInstance(this).enqueueUniquePeriodicWork(
+            "dream_cycle",
+            ExistingPeriodicWorkPolicy.KEEP,
+            dreamRequest
+        )
+
         registerActivityLifecycleCallbacks(object : ActivityLifecycleCallbacks {
             override fun onActivityStarted(a: Activity) { startedActivityCount++ }
             override fun onActivityStopped(a: Activity) { startedActivityCount-- }
@@ -103,7 +124,7 @@ class OnGridApplication : Application() {
 
     val database: AppDatabase by lazy {
         Room.databaseBuilder(this, AppDatabase::class.java, "ongrid.db")
-            .addMigrations(MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7)
+            .addMigrations(MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8)
             .fallbackToDestructiveMigration()
             .build()
     }
@@ -113,7 +134,7 @@ class OnGridApplication : Application() {
     val settingsRepository: SettingsRepository by lazy { SettingsRepository(this) }
     val utilityAgentRepository: UtilityAgentRepository by lazy { UtilityAgentRepository(ollamaApi) }
     val agentRepository: AgentRepository by lazy {
-        AgentRepository(database.agentDao(), database.agentMemoryDao())
+        AgentRepository(database.agentDao(), database.agentMemoryDao(), database.dreamLogDao())
     }
     val agentShortcutManager: AgentShortcutManager by lazy { AgentShortcutManager(this) }
 

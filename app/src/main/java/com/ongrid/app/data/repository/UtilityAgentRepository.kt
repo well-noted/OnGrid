@@ -295,4 +295,152 @@ ${conversationExchange.take(1200)}"""
             emptyList()
         }
     }
+
+    // ── Phase 2: Dreaming helpers ─────────────────────────────────────────────
+
+    /**
+     * Calculate an affective mood label for an agent based on the last 5 conversational turns.
+     * Returns one of: Neutral, Enthusiastic, Frustrated, Meticulous, Focused, Curious.
+     */
+    suspend fun calculateMood(
+        baseUrl: String,
+        modelName: String,
+        recentExchange: String
+    ): String? = try {
+        val request = OllamaChatRequest(
+            model = modelName,
+            messages = listOf(
+                OllamaChatMessage(
+                    role = "user",
+                    content = """Analyse the emotional tone of this conversation exchange from the perspective of the assistant. 
+Choose exactly one label that best describes the assistant's recent disposition: Neutral, Enthusiastic, Frustrated, Meticulous, Focused, Curious.
+Reply with only the single label word, nothing else.
+
+Exchange:
+${recentExchange.take(1200)}"""
+                )
+            ),
+            stream = false
+        )
+        val raw = api.chatOnce(baseUrl, request)?.trim() ?: return null
+        val allowed = setOf("Neutral", "Enthusiastic", "Frustrated", "Meticulous", "Focused", "Curious")
+        allowed.firstOrNull { it.equals(raw, ignoreCase = true) }
+    } catch (e: Exception) {
+        Log.w(TAG, "calculateMood failed: ${e.message}")
+        null
+    }
+
+    /**
+     * Triage a list of memories: merge similar unpinned ones into synthesised facts and flag
+     * low-utility entries for deletion.
+     *
+     * Returns a [TriageResult] with lists of entries to keep/merge/delete.
+     */
+    suspend fun triageMemories(
+        baseUrl: String,
+        modelName: String,
+        memories: List<String>
+    ): TriageResult {
+        if (memories.isEmpty()) return TriageResult()
+        return try {
+            val numbered = memories.mapIndexed { i, m -> "[$i] $m" }.joinToString("\n")
+            val request = OllamaChatRequest(
+                model = modelName,
+                messages = listOf(
+                    OllamaChatMessage(
+                        role = "user",
+                        content = """You are a memory curator for an AI agent. Review the numbered memories below and respond with EXACTLY this JSON (no markdown fences, no extra text):
+{
+  "keep": [list of indices to keep unchanged],
+  "merge": [list of indices that should be merged into one synthesised fact],
+  "delete": [list of indices that are outdated or low-utility],
+  "synthesised": "single merged fact combining the merged entries, or empty string if none"
 }
+
+Memories:
+$numbered"""
+                    )
+                ),
+                stream = false
+            )
+            val raw = api.chatOnce(baseUrl, request)?.trim() ?: return TriageResult()
+            parseTriageResult(raw)
+        } catch (e: Exception) {
+            Log.w(TAG, "triageMemories failed: ${e.message}")
+            TriageResult()
+        }
+    }
+
+    private fun parseTriageResult(json: String): TriageResult = try {
+        val obj = com.google.gson.JsonParser.parseString(json).asJsonObject
+        fun indices(key: String): List<Int> =
+            obj.getAsJsonArray(key)?.mapNotNull { it.asIntOrNull() } ?: emptyList()
+        TriageResult(
+            keep = indices("keep"),
+            merge = indices("merge"),
+            delete = indices("delete"),
+            synthesised = obj.get("synthesised")?.asString?.takeIf { it.isNotBlank() }
+        )
+    } catch (e: Exception) {
+        TriageResult()
+    }
+
+    private fun com.google.gson.JsonElement.asIntOrNull(): Int? = try { asInt } catch (_: Exception) { null }
+
+    /**
+     * Review the OPEN section of an agent's brief and flag tasks stagnant for > 3 days.
+     * Returns an updated brief with stale tasks moved to RECENT or archived, plus a
+     * human-readable description of what changed.
+     */
+    suspend fun reviewBriefForStaleTasks(
+        baseUrl: String,
+        modelName: String,
+        currentBrief: String,
+        agentRole: String,
+        lastConversationAt: Long
+    ): BriefReviewResult? = try {
+        val daysSinceLastActivity =
+            (System.currentTimeMillis() - lastConversationAt) / (1000L * 60 * 60 * 24)
+        val request = OllamaChatRequest(
+            model = modelName,
+            messages = listOf(
+                OllamaChatMessage(
+                    role = "user",
+                    content = """You are reviewing the state brief for an agent whose role is: $agentRole.
+The last conversation with this agent was $daysSinceLastActivity day(s) ago.
+Tasks in OPEN that have had no activity for more than 3 days should be moved to RECENT (marked as archived) or removed.
+Return EXACTLY this JSON (no markdown fences):
+{
+  "updatedBrief": "the full revised brief keeping STATUS / RECENT / OPEN format",
+  "changeDescription": "one sentence describing what was changed, or 'No changes' if nothing changed"
+}
+
+Current brief:
+$currentBrief"""
+                )
+            ),
+            stream = false
+        )
+        val raw = api.chatOnce(baseUrl, request)?.trim() ?: return null
+        val obj = com.google.gson.JsonParser.parseString(raw).asJsonObject
+        BriefReviewResult(
+            updatedBrief = obj.get("updatedBrief")?.asString?.takeIf { it.isNotBlank() },
+            changeDescription = obj.get("changeDescription")?.asString ?: "No changes"
+        )
+    } catch (e: Exception) {
+        Log.w(TAG, "reviewBriefForStaleTasks failed: ${e.message}")
+        null
+    }
+}
+
+data class TriageResult(
+    val keep: List<Int> = emptyList(),
+    val merge: List<Int> = emptyList(),
+    val delete: List<Int> = emptyList(),
+    val synthesised: String? = null
+)
+
+data class BriefReviewResult(
+    val updatedBrief: String?,
+    val changeDescription: String
+)

@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -31,13 +32,16 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.SmartToy
@@ -45,10 +49,12 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -57,9 +63,11 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Slider
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.SwipeToDismissBox
 import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.Text
@@ -73,6 +81,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -85,6 +94,7 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -97,6 +107,7 @@ import com.ongrid.app.data.local.AgentEntity
 import com.ongrid.app.data.local.AgentMemoryEntity
 import com.ongrid.app.data.local.AgentStatus
 import com.ongrid.app.data.local.ConversationEntity
+import com.ongrid.app.data.local.DreamLogEntity
 import com.ongrid.app.data.local.SavedServerEntity
 import com.ongrid.app.data.model.OllamaServer
 import com.ongrid.app.data.local.SkillEntity
@@ -107,6 +118,7 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import java.util.concurrent.TimeUnit
+import kotlin.math.roundToInt
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -125,6 +137,8 @@ fun AgentScreen(
     val memories by viewModel.agentMemories.collectAsState()
     val conversations by viewModel.agentConversations.collectAsState()
     val savedServers by viewModel.savedServers.collectAsState()
+    val dreamLogs by viewModel.dreamLogs.collectAsState()
+    val isDreaming by viewModel.isDreaming.collectAsState()
 
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
@@ -138,10 +152,12 @@ fun AgentScreen(
     var showSkillsToolsSheet by remember { mutableStateOf(false) }
     var showStatusMenu by remember { mutableStateOf(false) }
     var showModelPickerForTalk by remember { mutableStateOf(false) }
+    var showCognitionSheet by remember { mutableStateOf(false) }
 
     // Collapsible card states
     var briefExpanded by remember { mutableStateOf(true) }
     var memoriesExpanded by remember { mutableStateOf(false) }
+    var dreamJournalExpanded by remember { mutableStateOf(false) }
 
     val currentAgent = agent ?: return
 
@@ -184,9 +200,13 @@ fun AgentScreen(
                         showStatusMenu = false
                     },
                     onDismissStatusMenu = { showStatusMenu = false },
-                    onTalkClick = { showModelPickerForTalk = true }
+                    onTalkClick = { showModelPickerForTalk = true },
+                    onCognitionSettings = { showCognitionSheet = true }
                 )
             }
+
+            // ── Context Pressure Gauge ────────────────────────────────────────
+            item { ContextPressureGauge(agent = currentAgent, memories = memories) }
 
             // ── Brief Card ────────────────────────────────────────────────────
             item {
@@ -207,6 +227,33 @@ fun AgentScreen(
                     onToggleExpand = { memoriesExpanded = !memoriesExpanded },
                     onManage = { showMemoryManageSheet = true }
                 )
+            }
+
+            // ── Shared To-Do List (OPEN tasks from brief) ─────────────────────
+            val openTasks = parseOpenTasks(currentAgent.brief)
+            if (openTasks.isNotEmpty()) {
+                item {
+                    SharedTodoCard(
+                        tasks = openTasks,
+                        onTaskChecked = { checkedTask ->
+                            val newBrief = removeOpenTask(currentAgent.brief, checkedTask)
+                            viewModel.updateBrief(currentAgent.id, newBrief)
+                        }
+                    )
+                }
+            }
+
+            // ── Dream Journal ─────────────────────────────────────────────────
+            if (dreamLogs.isNotEmpty() || currentAgent.isDreamingEnabled) {
+                item {
+                    DreamJournalCard(
+                        logs = dreamLogs,
+                        isDreaming = isDreaming,
+                        expanded = dreamJournalExpanded,
+                        onToggleExpand = { dreamJournalExpanded = !dreamJournalExpanded },
+                        onDreamNow = { viewModel.triggerDreamNow() }
+                    )
+                }
             }
 
             // ── Skills & Tools Row ────────────────────────────────────────────
@@ -407,6 +454,49 @@ fun AgentScreen(
             }
         )
     }
+
+    // ── Cognition Settings Sheet ──────────────────────────────────────────────
+    if (showCognitionSheet) {
+        CognitionSettingsSheet(
+            agent = currentAgent,
+            isDreaming = isDreaming,
+            onDismiss = { showCognitionSheet = false },
+            onSave = { isDreaming, isMood, isAutoBrief, maxTokens ->
+                viewModel.saveCognitionSettings(
+                    currentAgent.id, isDreaming, isMood, isAutoBrief, maxTokens
+                )
+                showCognitionSheet = false
+            },
+            onResetVibe = { viewModel.resetMood(currentAgent.id) },
+            onDreamNow = {
+                showCognitionSheet = false
+                viewModel.triggerDreamNow()
+            }
+        )
+    }
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+/** Extract tasks from the OPEN: section of a brief string. */
+private fun parseOpenTasks(brief: String): List<String> {
+    val openSection = brief.split("/")
+        .find { it.trim().startsWith("OPEN:", ignoreCase = true) } ?: return emptyList()
+    val content = openSection.substringAfter(":").trim()
+    return if (content.isBlank() || content.lowercase() == "none") emptyList()
+    else content.split(Regex("[,;]")).map { it.trim() }.filter { it.isNotBlank() }
+}
+
+/** Remove a checked task from the OPEN section of a brief string. */
+private fun removeOpenTask(brief: String, task: String): String {
+    val parts = brief.split("/").toMutableList()
+    val openIndex = parts.indexOfFirst { it.trim().startsWith("OPEN:", ignoreCase = true) }
+    if (openIndex == -1) return brief
+    val openPart = parts[openIndex]
+    val prefix = openPart.substringBefore(":") + ":"
+    val remaining = parseOpenTasks(brief).filter { it != task }
+    parts[openIndex] = if (remaining.isEmpty()) "$prefix none" else "$prefix ${remaining.joinToString(", ")}"
+    return parts.joinToString(" /")
 }
 
 // ── Sub-composables ───────────────────────────────────────────────────────────
@@ -422,7 +512,8 @@ private fun AgentIdentityCard(
     showStatusMenu: Boolean,
     onStatusSelected: (AgentStatus) -> Unit,
     onDismissStatusMenu: () -> Unit,
-    onTalkClick: () -> Unit
+    onTalkClick: () -> Unit,
+    onCognitionSettings: () -> Unit
 ) {
     val seedColor = if (agent.color != 0) Color(agent.color) else MaterialTheme.colorScheme.primary
 
@@ -462,14 +553,29 @@ private fun AgentIdentityCard(
                 )
                 LaunchedEffect(Unit) { nameFocusRequester.requestFocus() }
             } else {
-                Text(
-                    text = agent.name,
-                    style = MaterialTheme.typography.headlineSmall,
-                    fontWeight = FontWeight.Bold,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { editingName = true }
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = agent.name,
+                        style = MaterialTheme.typography.headlineSmall,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier
+                            .clickable { editingName = true }
+                    )
+                    if (agent.isMoodTrackingEnabled && agent.currentMood.isNotBlank() && agent.currentMood != "Neutral") {
+                        Spacer(Modifier.width(8.dp))
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = seedColor.copy(alpha = 0.18f)
+                        ) {
+                            Text(
+                                text = agent.currentMood,
+                                style = MaterialTheme.typography.labelSmall,
+                                modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp),
+                                color = seedColor
+                            )
+                        }
+                    }
+                }
             }
 
             Spacer(Modifier.height(4.dp))
@@ -522,6 +628,9 @@ private fun AgentIdentityCard(
                 }
                 IconButton(onClick = onConfigureUtilityModel) {
                     Icon(Icons.Default.Settings, contentDescription = "Configure utility model")
+                }
+                IconButton(onClick = onCognitionSettings) {
+                    Icon(Icons.Default.Psychology, contentDescription = "Cognition settings")
                 }
                 Box {
                     IconButton(onClick = onStatusMenuClick) {
@@ -622,26 +731,32 @@ private fun AgentBriefCard(
                     )
                 } else {
                     Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
-                        agent.brief.split("/").map { it.trim() }.forEach { section ->
-                            if (section.contains(":")) {
-                                val (label, value) = section.split(":", limit = 2)
+                        agent.brief.split("/").map { it.trim() }.filter { it.isNotBlank() }.forEach { section ->
+                            val colonIdx = section.indexOf(':')
+                            val label = if (colonIdx > 0) section.substring(0, colonIdx).trim() else ""
+                            if (colonIdx > 0 && label.length <= 10) {
+                                val value = section.substring(colonIdx + 1).trim()
                                 Row(modifier = Modifier.padding(vertical = 2.dp)) {
                                     Text(
-                                        text = label.trim() + ":",
+                                        text = "$label:",
                                         style = MaterialTheme.typography.labelSmall,
                                         fontWeight = FontWeight.SemiBold,
                                         color = MaterialTheme.colorScheme.primary,
                                         modifier = Modifier.width(64.dp)
                                     )
                                     Text(
-                                        text = value.trim(),
+                                        text = value,
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                         modifier = Modifier.weight(1f)
                                     )
                                 }
                             } else {
-                                Text(section, style = MaterialTheme.typography.bodySmall)
+                                Text(
+                                    text = section,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
                             }
                         }
                         if (agent.briefUpdatedAt > 0L) {
@@ -936,11 +1051,12 @@ private fun MemoryItem(
     onUnpin: (String) -> Unit,
     onDelete: (String) -> Unit
 ) {
+    var expanded by remember { mutableStateOf(false) }
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .padding(vertical = 4.dp),
-        verticalAlignment = Alignment.CenterVertically
+        verticalAlignment = Alignment.Top
     ) {
         IconButton(
             onClick = { if (memory.isPinned) onUnpin(memory.id) else onPin(memory.id) },
@@ -957,9 +1073,12 @@ private fun MemoryItem(
         Text(
             memory.content,
             style = MaterialTheme.typography.bodySmall,
-            modifier = Modifier.weight(1f),
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis
+            modifier = Modifier
+                .weight(1f)
+                .clickable { expanded = !expanded }
+                .padding(top = 6.dp),
+            maxLines = if (expanded) Int.MAX_VALUE else 2,
+            overflow = if (expanded) TextOverflow.Clip else TextOverflow.Ellipsis
         )
         IconButton(
             onClick = { onDelete(memory.id) },
@@ -1151,6 +1270,435 @@ private fun AgentSkillsToolsSheet(
                 modifier = Modifier.align(Alignment.End)
             ) { Text("Save") }
         }
+    }
+}
+
+// ── Context Pressure Gauge ────────────────────────────────────────────────────
+
+@Composable
+private fun ContextPressureGauge(
+    agent: AgentEntity,
+    memories: List<AgentMemoryEntity>
+) {
+    val promptTokens = (agent.systemPrompt.length / 4).coerceAtLeast(0)
+    val briefTokens = (agent.brief.length / 4).coerceAtLeast(0)
+    val memoryTokens = memories.sumOf { it.content.length / 4 }.coerceAtLeast(0)
+    val total = (promptTokens + briefTokens + memoryTokens).coerceAtLeast(1)
+    val budget = agent.maxContextTokens.coerceAtLeast(1)
+    val usageFraction = (total.toFloat() / budget).coerceIn(0f, 1f)
+
+    val promptColor = MaterialTheme.colorScheme.primary
+    val briefColor = MaterialTheme.colorScheme.secondary
+    val memoryColor = MaterialTheme.colorScheme.tertiary
+    val overBudgetColor = MaterialTheme.colorScheme.error
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+    ) {
+        Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("Context Pressure", style = MaterialTheme.typography.labelMedium)
+                Text(
+                    "$total / $budget tokens",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = if (usageFraction > 0.85f) overBudgetColor
+                            else MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            Spacer(Modifier.height(6.dp))
+
+            // Segmented bar
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(8.dp)
+                    .clip(RoundedCornerShape(4.dp))
+                    .background(MaterialTheme.colorScheme.outline.copy(alpha = 0.15f))
+            ) {
+                Row(modifier = Modifier.fillMaxSize()) {
+                    val promptW = (promptTokens.toFloat() / budget).coerceIn(0f, 1f)
+                    val briefW = (briefTokens.toFloat() / budget).coerceIn(0f, 1f - promptW)
+                    val memW = (memoryTokens.toFloat() / budget).coerceIn(0f, (1f - promptW - briefW).coerceAtLeast(0f))
+                    if (promptW > 0f) Box(modifier = Modifier.weight(promptW).fillMaxHeight().background(promptColor))
+                    if (briefW > 0f) Box(modifier = Modifier.weight(briefW).fillMaxHeight().background(briefColor))
+                    if (memW > 0f) Box(modifier = Modifier.weight(memW).fillMaxHeight().background(memoryColor))
+                    val remaining = (1f - promptW - briefW - memW).coerceAtLeast(0f)
+                    if (remaining > 0f) Box(modifier = Modifier.weight(remaining).fillMaxHeight())
+                }
+            }
+
+            Spacer(Modifier.height(6.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                LegendDot(color = promptColor, label = "Prompt ($promptTokens)")
+                LegendDot(color = briefColor, label = "Brief ($briefTokens)")
+                LegendDot(color = memoryColor, label = "Memory ($memoryTokens)")
+            }
+        }
+    }
+}
+
+@Composable
+private fun LegendDot(color: Color, label: String) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Box(
+            modifier = Modifier
+                .size(8.dp)
+                .clip(CircleShape)
+                .background(color)
+        )
+        Spacer(Modifier.width(4.dp))
+        Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+// ── Shared To-Do Card (OPEN tasks from brief) ─────────────────────────────────
+
+@Composable
+private fun SharedTodoCard(
+    tasks: List<String>,
+    onTaskChecked: (String) -> Unit
+) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text(
+                "Open Tasks",
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.SemiBold
+            )
+            Spacer(Modifier.height(8.dp))
+            tasks.forEach { task ->
+                FilterChip(
+                    selected = false,
+                    onClick = { onTaskChecked(task) },
+                    label = { Text(task, style = MaterialTheme.typography.bodySmall) },
+                    leadingIcon = { Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(14.dp)) },
+                    modifier = Modifier.padding(vertical = 2.dp)
+                )
+            }
+        }
+    }
+}
+
+// ── Dream Journal Card ────────────────────────────────────────────────────────
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun DreamJournalCard(
+    logs: List<DreamLogEntity>,
+    isDreaming: Boolean,
+    expanded: Boolean,
+    onToggleExpand: () -> Unit,
+    onDreamNow: () -> Unit
+) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable(onClick = onToggleExpand),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.History, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        "Dream Journal",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    if (logs.isNotEmpty()) {
+                        Spacer(Modifier.width(6.dp))
+                        Surface(
+                            shape = RoundedCornerShape(10.dp),
+                            color = MaterialTheme.colorScheme.secondaryContainer
+                        ) {
+                            Text(
+                                "${logs.size}",
+                                style = MaterialTheme.typography.labelSmall,
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                            )
+                        }
+                    }
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (isDreaming) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(16.dp),
+                            strokeWidth = 2.dp
+                        )
+                        Spacer(Modifier.width(8.dp))
+                    }
+                    FilledTonalButton(
+                        onClick = onDreamNow,
+                        enabled = !isDreaming,
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                        modifier = Modifier.height(32.dp)
+                    ) {
+                        Icon(Icons.Default.AutoAwesome, contentDescription = null, modifier = Modifier.size(14.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("Dream Now", style = MaterialTheme.typography.labelSmall)
+                    }
+                    Spacer(Modifier.width(4.dp))
+                    Icon(
+                        if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                        contentDescription = if (expanded) "Collapse" else "Expand"
+                    )
+                }
+            }
+
+            AnimatedVisibility(visible = expanded) {
+                Column(modifier = Modifier.padding(top = 8.dp)) {
+                    if (logs.isEmpty()) {
+                        Text(
+                            "No dream cycles recorded yet.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+                        )
+                    } else {
+                        logs.forEach { log ->
+                            DreamLogEntry(log = log)
+                            HorizontalDivider(modifier = Modifier.padding(vertical = 6.dp))
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun DreamLogEntry(log: DreamLogEntity) {
+    var showDiff by remember { mutableStateOf(false) }
+
+    Column(modifier = Modifier.animateContentSize()) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.Top
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    relativeTime(log.timestamp),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+                )
+                Text(log.summary, style = MaterialTheme.typography.bodySmall)
+                if (log.moodChange != null) {
+                    Text(
+                        "Vibe: ${log.moodChange}",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.secondary
+                    )
+                }
+            }
+            TextButton(
+                onClick = { showDiff = !showDiff },
+                contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp)
+            ) {
+                Text(if (showDiff) "Hide" else "Diff", style = MaterialTheme.typography.labelSmall)
+            }
+        }
+
+        if (showDiff && log.fullLogJson.isNotBlank()) {
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 4.dp),
+                shape = RoundedCornerShape(6.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant
+            ) {
+                Text(
+                    text = log.fullLogJson,
+                    style = MaterialTheme.typography.labelSmall.copy(
+                        fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
+                    ),
+                    modifier = Modifier.padding(8.dp)
+                )
+            }
+        }
+    }
+}
+
+// ── Cognition Settings Sheet ──────────────────────────────────────────────────
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun CognitionSettingsSheet(
+    agent: AgentEntity,
+    isDreaming: Boolean,
+    onDismiss: () -> Unit,
+    onSave: (isDreamingEnabled: Boolean, isMoodTrackingEnabled: Boolean, isAutoBriefEnabled: Boolean, maxContextTokens: Int) -> Unit,
+    onResetVibe: () -> Unit,
+    onDreamNow: () -> Unit
+) {
+    var dreamingEnabled by remember { mutableStateOf(agent.isDreamingEnabled) }
+    var moodEnabled by remember { mutableStateOf(agent.isMoodTrackingEnabled) }
+    var autoBriefEnabled by remember { mutableStateOf(agent.isAutoBriefEnabled) }
+    // Slider: 256 to 8192 in steps of 256 → store as float, display as Int
+    var tokenBudget by remember {
+        mutableFloatStateOf(
+            (agent.maxContextTokens.coerceIn(256, 8192) / 256f).roundToInt().toFloat()
+        )
+    }
+    val tokenBudgetInt = (tokenBudget.roundToInt() * 256).coerceIn(256, 8192)
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp)
+                .padding(bottom = 32.dp)
+                .verticalScroll(rememberScrollState())
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.Psychology, contentDescription = null)
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    "Cognition Settings",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
+
+            Spacer(Modifier.height(16.dp))
+
+            // Dreaming toggle
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Enable Dreaming", style = MaterialTheme.typography.bodyMedium)
+                    Text(
+                        "Periodic memory consolidation & mood calculation",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Switch(checked = dreamingEnabled, onCheckedChange = { dreamingEnabled = it })
+            }
+
+            Spacer(Modifier.height(12.dp))
+
+            // Mood tracking toggle
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Mood Tracking", style = MaterialTheme.typography.bodyMedium)
+                    Text(
+                        "Infer and display the agent's current disposition",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Switch(checked = moodEnabled, onCheckedChange = { moodEnabled = it })
+            }
+
+            Spacer(Modifier.height(12.dp))
+
+            // Auto-Brief toggle
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Auto-Brief", style = MaterialTheme.typography.bodyMedium)
+                    Text(
+                        "Automatically review and update stale OPEN tasks",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Switch(checked = autoBriefEnabled, onCheckedChange = { autoBriefEnabled = it })
+            }
+
+            Spacer(Modifier.height(16.dp))
+            HorizontalDivider()
+            Spacer(Modifier.height(16.dp))
+
+            // Token budget slider
+            Text("Context Budget: $tokenBudgetInt tokens", style = MaterialTheme.typography.bodyMedium)
+            Spacer(Modifier.height(4.dp))
+            Slider(
+                value = tokenBudget,
+                onValueChange = { tokenBudget = it },
+                valueRange = 1f..(8192f / 256f),
+                steps = (8192 / 256) - 2,
+                modifier = Modifier.fillMaxWidth()
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text("256", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("8192", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+
+            Spacer(Modifier.height(16.dp))
+            HorizontalDivider()
+            Spacer(Modifier.height(16.dp))
+
+            // Reset Vibe & Dream Now
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                OutlinedButton(
+                    onClick = {
+                        onResetVibe()
+                    },
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text("Reset Vibe")
+                }
+                FilledTonalButton(
+                    onClick = onDreamNow,
+                    enabled = !isDreaming,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    if (isDreaming) {
+                        CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                    } else {
+                        Icon(Icons.Default.AutoAwesome, contentDescription = null, modifier = Modifier.size(16.dp))
+                    }
+                    Spacer(Modifier.width(6.dp))
+                    Text(if (isDreaming) "Dreaming…" else "Dream Now")
+                }
+            }
+
+            Spacer(Modifier.height(16.dp))
+
+            // Save
+            Button(
+                onClick = { onSave(dreamingEnabled, moodEnabled, autoBriefEnabled, tokenBudgetInt) },
+                modifier = Modifier.fillMaxWidth()
+            ) { Text("Save Settings") }
+        }
+    }
+}
+
+@Composable
+private fun OutlinedButton(
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    content: @Composable () -> Unit
+) {
+    androidx.compose.material3.OutlinedButton(onClick = onClick, modifier = modifier) {
+        content()
     }
 }
 

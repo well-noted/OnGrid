@@ -21,5 +21,12 @@ data class AgentEntity(
     val utilityModelHost: String = "",
     val utilityModelName: String = "",
     val retiredAt: Long? = null,
-    val createdAt: Long = System.currentTimeMillis()
+    val createdAt: Long = System.currentTimeMillis(),
+    // Phase 2 — Autonomous Agency
+    val isDreamingEnabled: Boolean = true,
+    val isMoodTrackingEnabled: Boolean = false,
+    val isAutoBriefEnabled: Boolean = true,
+    val maxContextTokens: Int = 4096,
+    val currentMood: String = "Neutral",
+    val lastDreamedAt: Long = 0L
 )
