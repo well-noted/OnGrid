@@ -250,6 +250,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         val mcpTools = toolMap.values.map { (_, mcpTool) -> mcpTool.toOllamaTool() }
         val builtInTools = buildList {
             add(app.webSearchRepository.tool.toOllamaTool())
+            add(app.webFetchRepository.tool.toOllamaTool())
             if (_uiState.value.currentAgentId != null) {
                 add(app.formMemoryRepository.tool.toOllamaTool())
                 add(app.skillActivationRepository.tool.toOllamaTool())

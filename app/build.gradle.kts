@@ -70,6 +70,7 @@ dependencies {
     ksp(libs.androidx.room.compiler)
     implementation(libs.markdown.renderer.m3)
     implementation(libs.androidx.work.runtime.ktx)
+    implementation("org.jsoup:jsoup:1.17.2")
 
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)

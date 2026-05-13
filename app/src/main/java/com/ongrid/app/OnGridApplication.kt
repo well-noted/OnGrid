@@ -35,6 +35,7 @@ import com.ongrid.app.data.repository.SkillActivationRepository
 import com.ongrid.app.data.repository.SkillRepository
 import com.ongrid.app.data.repository.DreamScheduleRepository
 import com.ongrid.app.data.repository.UtilityAgentRepository
+import com.ongrid.app.data.repository.WebFetchRepository
 import com.ongrid.app.data.repository.WebSearchRepository
 import kotlinx.coroutines.channels.Channel
 import okhttp3.OkHttpClient
@@ -142,6 +143,7 @@ class OnGridApplication : Application() {
     val ollamaRepository: OllamaRepository by lazy { OllamaRepository(ollamaApi) }
     val mcpRepository: McpRepository by lazy { McpRepository(mcpApi, this) }
     val webSearchRepository: WebSearchRepository by lazy { WebSearchRepository(webSearchApi) }
+    val webFetchRepository by lazy { WebFetchRepository(httpClient) }
     val formMemoryRepository: FormMemoryRepository by lazy { FormMemoryRepository(database.agentMemoryDao()) }
     val skillActivationRepository: SkillActivationRepository by lazy { SkillActivationRepository() }
 

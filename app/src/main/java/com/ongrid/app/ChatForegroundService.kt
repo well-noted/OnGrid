@@ -186,6 +186,7 @@ class ChatForegroundService : Service() {
                     val (resultText, isError) = try {
                         val schema: McpInputSchema? = when {
                             funcName == "web_search" -> app.webSearchRepository.tool.inputSchema
+                            funcName == "fetch_url" -> app.webFetchRepository.tool.inputSchema
                             funcName == "form_memory" -> app.formMemoryRepository.tool.inputSchema
                             funcName == "use_skill" -> app.skillActivationRepository.tool.inputSchema
                             serverEntry != null -> serverEntry.second.inputSchema
@@ -197,6 +198,9 @@ class ChatForegroundService : Service() {
                         } else when {
                             funcName == "web_search" -> {
                                 app.webSearchRepository.search(args) to false
+                            }
+                            funcName == "fetch_url" -> {
+                                app.webFetchRepository.fetch(args) to false
                             }
                             funcName == "form_memory" -> {
                                 val agentId = pending.agentId
@@ -235,6 +239,7 @@ class ChatForegroundService : Service() {
                             else -> {
                                 val availableNames = buildList {
                                     add("web_search")
+                                    add("fetch_url")
                                     if (pending.agentId != null) {
                                         add("form_memory")
                                         add("use_skill")
