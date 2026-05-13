@@ -23,6 +23,7 @@ import com.ongrid.app.data.local.MIGRATION_7_8
 import com.ongrid.app.data.local.MIGRATION_8_9
 import com.ongrid.app.data.repository.AgentRepository
 import com.ongrid.app.data.repository.ConversationRepository
+import com.ongrid.app.data.repository.FormMemoryRepository
 import com.ongrid.app.data.repository.McpRepository
 import com.ongrid.app.data.repository.OllamaRepository
 import com.ongrid.app.data.repository.ServerRepository
@@ -48,7 +49,9 @@ data class PendingChatRequest(
     /** Agent display name for the MessagingStyle Person. */
     val agentName: String? = null,
     /** Current mood prepended as a tonal hint in the reply notification subtext. */
-    val agentMood: String? = null
+    val agentMood: String? = null,
+    /** Conversation ID passed to built-in tools that write to the database (e.g. form_memory). */
+    val conversationId: String? = null
 )
 
 /**
@@ -76,6 +79,8 @@ sealed class ChatServiceEvent {
     ) : ChatServiceEvent()
     /** Token usage reported by the final streaming chunk (done = true). */
     data class TokenUsage(val promptTokens: Int, val generatedTokens: Int) : ChatServiceEvent()
+    /** Emitted after a successful `form_memory` tool call so the ViewModel can reload memories. */
+    data class MemoryFormed(val agentId: String) : ChatServiceEvent()
 }
 
 class OnGridApplication : Application() {
@@ -126,6 +131,7 @@ class OnGridApplication : Application() {
     val ollamaRepository: OllamaRepository by lazy { OllamaRepository(ollamaApi) }
     val mcpRepository: McpRepository by lazy { McpRepository(mcpApi, this) }
     val webSearchRepository: WebSearchRepository by lazy { WebSearchRepository(webSearchApi) }
+    val formMemoryRepository: FormMemoryRepository by lazy { FormMemoryRepository(database.agentMemoryDao()) }
 
     val database: AppDatabase by lazy {
         Room.databaseBuilder(this, AppDatabase::class.java, "ongrid.db")

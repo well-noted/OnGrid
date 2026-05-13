@@ -184,6 +184,7 @@ class ChatForegroundService : Service() {
                     val (resultText, isError) = try {
                         val schema: McpInputSchema? = when {
                             funcName == "web_search" -> app.webSearchRepository.tool.inputSchema
+                            funcName == "form_memory" -> app.formMemoryRepository.tool.inputSchema
                             serverEntry != null -> serverEntry.second.inputSchema
                             else -> null
                         }
@@ -194,6 +195,19 @@ class ChatForegroundService : Service() {
                             funcName == "web_search" -> {
                                 app.webSearchRepository.search(args) to false
                             }
+                            funcName == "form_memory" -> {
+                                val agentId = pending.agentId
+                                if (agentId == null) {
+                                    "Error: form_memory is only available inside an agent workspace." to true
+                                } else {
+                                    val result = app.formMemoryRepository.formMemory(
+                                        agentId, pending.conversationId, args
+                                    )
+                                    // Notify the ViewModel so it can refresh the in-memory list.
+                                    app.chatServiceChannel.send(ChatServiceEvent.MemoryFormed(agentId))
+                                    result to false
+                                }
+                            }
                             serverEntry != null -> {
                                 val r = app.mcpRepository.callTool(serverEntry.first, funcName, args)
                                 r.content.joinToString("\n") { it.text } to r.isError
@@ -201,6 +215,7 @@ class ChatForegroundService : Service() {
                             else -> {
                                 val availableNames = buildList {
                                     add("web_search")
+                                    if (pending.agentId != null) add("form_memory")
                                     addAll(toolMap.keys)
                                 }
                                 val availableList = if (availableNames.isEmpty()) "none"

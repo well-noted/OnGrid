@@ -224,12 +224,24 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     /** Load available MCP tools plus built-in tools for the current session. */
     fun loadTools() {
-        viewModelScope.launch {
-            val toolMap = app.mcpRepository.getAllEnabledTools()
-            val mcpTools = toolMap.values.map { (_, mcpTool) -> mcpTool.toOllamaTool() }
-            val builtInTools = listOf(app.webSearchRepository.tool.toOllamaTool())
-            _uiState.value = _uiState.value.copy(availableTools = builtInTools + mcpTools)
+        viewModelScope.launch { refreshToolsList() }
+    }
+
+    /**
+     * Rebuilds the available-tools list and updates [_uiState].
+     * Must be called from a coroutine (suspend).  Adds `form_memory` only when an agent
+     * workspace is active so the tool is invisible outside of that context.
+     */
+    private suspend fun refreshToolsList() {
+        val toolMap = app.mcpRepository.getAllEnabledTools()
+        val mcpTools = toolMap.values.map { (_, mcpTool) -> mcpTool.toOllamaTool() }
+        val builtInTools = buildList {
+            add(app.webSearchRepository.tool.toOllamaTool())
+            if (_uiState.value.currentAgentId != null) {
+                add(app.formMemoryRepository.tool.toOllamaTool())
+            }
         }
+        _uiState.value = _uiState.value.copy(availableTools = builtInTools + mcpTools)
     }
 
     /** Toggle a specific tool on/off for the current conversation. */
@@ -311,7 +323,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             agentName = _uiState.value.currentAgent?.name,
             agentMood = _uiState.value.currentAgent
                 ?.takeIf { it.isMoodTrackingEnabled }
-                ?.currentMood
+                ?.currentMood,
+            conversationId = currentConversationId
         )
         _uiState.value = _uiState.value.copy(isLoading = true, error = null)
 
@@ -377,6 +390,12 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     is ChatServiceEvent.AppendMessage -> {
                         _messages.value = _messages.value + event.message
                         repo.saveMessage(convId, event.message)
+                    }
+
+                    is ChatServiceEvent.MemoryFormed -> {
+                        // Reload the agent's memory list so the new pinned entry is visible
+                        // immediately (e.g. in the agent memory sheet).
+                        loadAgent(event.agentId)
                     }
 
                     is ChatServiceEvent.TokenUsage ->
@@ -645,6 +664,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 currentAgent = null,
                 agentMemories = emptyList()
             )
+            // Remove form_memory from the tool list now that no agent is active.
+            viewModelScope.launch { refreshToolsList() }
             return
         }
         viewModelScope.launch { loadAgent(agentId) }
@@ -705,6 +726,9 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 activateSkill(skill)
             }
         }
+
+        // Ensure form_memory is included now that an agent is active.
+        refreshToolsList()
     }
 
     // ── Project association ───────────────────────────────────────────────────
