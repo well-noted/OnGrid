@@ -86,6 +86,8 @@ class ChatForegroundService : Service() {
     private suspend fun runFullTurn(pending: PendingChatRequest, startId: Int) {
         var currentMsgId = pending.assistantMsgId
         var currentRequest = pending.request
+        // Mutable copy so skills are removed from the available set after being activated
+        val remainingSkillMap = pending.availableSkillMap.toMutableMap()
 
         try {
             while (true) {
@@ -185,6 +187,7 @@ class ChatForegroundService : Service() {
                         val schema: McpInputSchema? = when {
                             funcName == "web_search" -> app.webSearchRepository.tool.inputSchema
                             funcName == "form_memory" -> app.formMemoryRepository.tool.inputSchema
+                            funcName == "use_skill" -> app.skillActivationRepository.tool.inputSchema
                             serverEntry != null -> serverEntry.second.inputSchema
                             else -> null
                         }
@@ -208,6 +211,23 @@ class ChatForegroundService : Service() {
                                     result to false
                                 }
                             }
+                            funcName == "use_skill" -> {
+                                val skillName = args["skill_name"]?.toString()?.trim() ?: ""
+                                val entry = remainingSkillMap[skillName]
+                                if (entry == null) {
+                                    val names = remainingSkillMap.keys.joinToString(", ").ifEmpty { "none" }
+                                    "Skill '$skillName' not found. Available skills: $names" to true
+                                } else {
+                                    val (skillId, skillContent) = entry
+                                    // Remove from available set so it can't be double-activated
+                                    remainingSkillMap.remove(skillName)
+                                    // Inject skill content as the first system message in the next request
+                                    nextMessages.add(0, OllamaChatMessage(role = "system", content = skillContent))
+                                    // Notify the ViewModel so it marks the skill active
+                                    app.chatServiceChannel.send(ChatServiceEvent.SkillActivated(skillId))
+                                    "Skill '$skillName' is now active. Its instructions have been loaded." to false
+                                }
+                            }
                             serverEntry != null -> {
                                 val r = app.mcpRepository.callTool(serverEntry.first, funcName, args)
                                 r.content.joinToString("\n") { it.text } to r.isError
@@ -215,7 +235,10 @@ class ChatForegroundService : Service() {
                             else -> {
                                 val availableNames = buildList {
                                     add("web_search")
-                                    if (pending.agentId != null) add("form_memory")
+                                    if (pending.agentId != null) {
+                                        add("form_memory")
+                                        add("use_skill")
+                                    }
                                     addAll(toolMap.keys)
                                 }
                                 val availableList = if (availableNames.isEmpty()) "none"

@@ -239,6 +239,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             add(app.webSearchRepository.tool.toOllamaTool())
             if (_uiState.value.currentAgentId != null) {
                 add(app.formMemoryRepository.tool.toOllamaTool())
+                add(app.skillActivationRepository.tool.toOllamaTool())
             }
         }
         _uiState.value = _uiState.value.copy(availableTools = builtInTools + mcpTools)
@@ -315,6 +316,16 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         // Drain any leftover events from a previous (completed or cancelled) request.
         while (true) { app.chatServiceChannel.tryReceive().getOrNull() ?: break }
 
+        // Build the available-skill map for the agent (skills assigned to agent but not yet active)
+        val agentSkillMap: Map<String, Pair<String, String>> = run {
+            val agent = _uiState.value.currentAgent ?: return@run emptyMap()
+            val activeIds = _uiState.value.activeSkillIds
+            val assignedIds = agentRepo.parseSkillIds(agent.defaultSkillIds).toSet()
+            _uiState.value.availableSkills
+                .filter { it.id in assignedIds && it.id !in activeIds }
+                .associate { it.name to (it.id to it.content) }
+        }
+
         app.pendingChatRequest = PendingChatRequest(
             assistantMsgId = assistantMsgId,
             baseUrl = server.baseUrl,
@@ -324,7 +335,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             agentMood = _uiState.value.currentAgent
                 ?.takeIf { it.isMoodTrackingEnabled }
                 ?.currentMood,
-            conversationId = currentConversationId
+            conversationId = currentConversationId,
+            availableSkillMap = agentSkillMap
         )
         _uiState.value = _uiState.value.copy(isLoading = true, error = null)
 
@@ -338,7 +350,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         val utilityModel = _uiState.value.utilityModelName
         val settings = currentSettings.value
         if (settings.utilityAgentEnabled) {
-            if (settings.skillSuggestionEnabled) {
+            if (settings.skillSuggestionEnabled && _uiState.value.currentAgentId == null) {
                 viewModelScope.launch {
                     val activeIds = _uiState.value.activeSkillIds
                     val skillNames = _uiState.value.availableSkills
@@ -399,6 +411,12 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                         // Reload the agent's memory list so the new pinned entry is visible
                         // immediately (e.g. in the agent memory sheet).
                         loadAgent(event.agentId)
+                    }
+
+                    is ChatServiceEvent.SkillActivated -> {
+                        // Mark the skill as active in the conversation so future turns include it.
+                        val skill = _uiState.value.availableSkills.find { it.id == event.skillId }
+                        if (skill != null) activateSkill(skill)
                     }
 
                     is ChatServiceEvent.TokenUsage ->
@@ -719,20 +737,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         val disabledTools = agentRepo.parseDisabledTools(agent.defaultDisabledToolNames).toSet()
         _uiState.value = _uiState.value.copy(disabledToolNames = disabledTools)
 
-        // Activate agent's default skills
-        val skillIds = agentRepo.parseSkillIds(agent.defaultSkillIds)
-        // Use first() to read directly from the DB in case the uiState cache hasn't
-        // been populated yet (race between the init collector and loadAgent).
-        val availableSkills = app.skillRepository.allSkills.first()
-        val currentActiveIds = _uiState.value.activeSkillIds
-        skillIds.forEach { skillId ->
-            if (skillId !in currentActiveIds) {
-                val skill = availableSkills.find { it.id == skillId } ?: return@forEach
-                activateSkill(skill)
-            }
-        }
-
-        // Ensure form_memory is included now that an agent is active.
+        // Ensure form_memory and use_skill are included now that an agent is active.
         refreshToolsList()
     }
 
@@ -917,6 +922,21 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             // No agent: use existing global system prompt messages as normal
             injected += mainSystem.map { msg ->
                 OllamaChatMessage(role = msg.role.name.lowercase(), content = msg.content)
+            }
+        }
+
+        // Available-but-not-yet-active skills assigned to this agent
+        if (agent != null) {
+            val assignedIds = agentRepo.parseSkillIds(agent.defaultSkillIds).toSet()
+            val activeIds = _uiState.value.activeSkillIds
+            val availableForAgent = _uiState.value.availableSkills
+                .filter { it.id in assignedIds && it.id !in activeIds }
+            if (availableForAgent.isNotEmpty()) {
+                val list = availableForAgent.joinToString("\n") { "• ${it.name}: ${it.description}" }
+                injected += OllamaChatMessage(
+                    role = "system",
+                    content = "Available skills you can activate with the `use_skill` tool:\n$list"
+                )
             }
         }
 

@@ -28,6 +28,7 @@ import com.ongrid.app.data.repository.McpRepository
 import com.ongrid.app.data.repository.OllamaRepository
 import com.ongrid.app.data.repository.ServerRepository
 import com.ongrid.app.data.repository.SettingsRepository
+import com.ongrid.app.data.repository.SkillActivationRepository
 import com.ongrid.app.data.repository.SkillRepository
 import com.ongrid.app.data.repository.DreamScheduleRepository
 import com.ongrid.app.data.repository.UtilityAgentRepository
@@ -51,7 +52,12 @@ data class PendingChatRequest(
     /** Current mood prepended as a tonal hint in the reply notification subtext. */
     val agentMood: String? = null,
     /** Conversation ID passed to built-in tools that write to the database (e.g. form_memory). */
-    val conversationId: String? = null
+    val conversationId: String? = null,
+    /**
+     * Skills available for the agent to activate via `use_skill`.  Keyed by skill name;
+     * value is (skillId, skillContent).  Empty outside agent mode.
+     */
+    val availableSkillMap: Map<String, Pair<String, String>> = emptyMap()
 )
 
 /**
@@ -81,6 +87,8 @@ sealed class ChatServiceEvent {
     data class TokenUsage(val promptTokens: Int, val generatedTokens: Int) : ChatServiceEvent()
     /** Emitted after a successful `form_memory` tool call so the ViewModel can reload memories. */
     data class MemoryFormed(val agentId: String) : ChatServiceEvent()
+    /** Emitted after a successful `use_skill` tool call so the ViewModel can mark the skill active. */
+    data class SkillActivated(val skillId: String) : ChatServiceEvent()
 }
 
 class OnGridApplication : Application() {
@@ -132,6 +140,7 @@ class OnGridApplication : Application() {
     val mcpRepository: McpRepository by lazy { McpRepository(mcpApi, this) }
     val webSearchRepository: WebSearchRepository by lazy { WebSearchRepository(webSearchApi) }
     val formMemoryRepository: FormMemoryRepository by lazy { FormMemoryRepository(database.agentMemoryDao()) }
+    val skillActivationRepository: SkillActivationRepository by lazy { SkillActivationRepository() }
 
     val database: AppDatabase by lazy {
         Room.databaseBuilder(this, AppDatabase::class.java, "ongrid.db")
