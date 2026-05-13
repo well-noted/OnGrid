@@ -24,6 +24,9 @@ import java.util.concurrent.TimeUnit
 private const val TAG = "OllamaApi"
 private val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
 
+/** Result of a server reachability check. */
+enum class ServerPingResult { REACHABLE, NOT_OLLAMA, UNREACHABLE }
+
 class OllamaApi(private val client: OkHttpClient) {
 
     // Streaming responses can take arbitrarily long between tokens; disable the read timeout
@@ -46,6 +49,33 @@ class OllamaApi(private val client: OkHttpClient) {
     } catch (e: IOException) {
         Log.d(TAG, "getVersion failed for $baseUrl: ${e.message}")
         null
+    }
+
+    /**
+     * Ping the server at [baseUrl] and classify the result:
+     * - [ServerPingResult.REACHABLE]: /api/version returned a valid Ollama version.
+     * - [ServerPingResult.NOT_OLLAMA]: server responded but isn't an Ollama instance.
+     * - [ServerPingResult.UNREACHABLE]: network failure (timeout, refused, etc.).
+     */
+    suspend fun ping(baseUrl: String): ServerPingResult = withContext(Dispatchers.IO) {
+        try {
+            val request = Request.Builder().url("$baseUrl/api/version").get().build()
+            client.newCall(request).execute().use { response ->
+                if (response.isSuccessful) {
+                    val body = response.body?.string()
+                    val parsed = runCatching {
+                        gson.fromJson(body, OllamaVersionResponse::class.java)
+                    }.getOrNull()
+                    if (parsed?.version?.isNotBlank() == true) ServerPingResult.REACHABLE
+                    else ServerPingResult.NOT_OLLAMA
+                } else {
+                    ServerPingResult.NOT_OLLAMA
+                }
+            }
+        } catch (e: IOException) {
+            Log.d(TAG, "ping failed for $baseUrl: ${e.message}")
+            ServerPingResult.UNREACHABLE
+        }
     }
 
     /** List all available models on the server. */

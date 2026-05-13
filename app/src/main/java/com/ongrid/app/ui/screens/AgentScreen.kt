@@ -10,6 +10,8 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -116,6 +118,7 @@ import com.ongrid.app.data.local.SavedServerEntity
 import com.ongrid.app.data.model.OllamaServer
 import com.ongrid.app.data.local.SkillEntity
 import com.ongrid.app.viewmodel.AgentViewModel
+import com.ongrid.app.viewmodel.ServerPingStatus
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
@@ -144,6 +147,10 @@ fun AgentScreen(
     val dreamLogs by viewModel.dreamLogs.collectAsState()
     val isDreaming by viewModel.isDreaming.collectAsState()
     val dreamSchedules by viewModel.dreamSchedules.collectAsState()
+    val pingStatus by viewModel.pingStatus.collectAsState()
+
+    // Auto-ping whenever the agent's server config changes
+    LaunchedEffect(agentId) { viewModel.pingAgentServer(agentId) }
 
     // Live terminal feed from DreamWorker
     val liveFeedLines = remember { androidx.compose.runtime.mutableStateListOf<String>() }
@@ -238,7 +245,9 @@ fun AgentScreen(
                     },
                     onCognitionSettings = { showCognitionSheet = true },
                     onChangeColor = { showColorPicker = true },
-                    onChangeAvatarIcon = { showAvatarPicker = true }
+                    onChangeAvatarIcon = { showAvatarPicker = true },
+                    pingStatus = pingStatus,
+                    onPingNow = { viewModel.pingAgentServer(currentAgent.id) }
                 )
             }
 
@@ -593,6 +602,7 @@ private fun removeOpenTask(brief: String, task: String): String {
 
 // ── Sub-composables ───────────────────────────────────────────────────────────
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun AgentIdentityCard(
     agent: AgentEntity,
@@ -607,7 +617,9 @@ private fun AgentIdentityCard(
     onTalkClick: () -> Unit,
     onCognitionSettings: () -> Unit,
     onChangeColor: () -> Unit,
-    onChangeAvatarIcon: () -> Unit
+    onChangeAvatarIcon: () -> Unit,
+    pingStatus: ServerPingStatus = ServerPingStatus.UNKNOWN,
+    onPingNow: () -> Unit = {}
 ) {
     val seedColor = if (agent.color != 0) Color(agent.color) else MaterialTheme.colorScheme.primary
 
@@ -688,7 +700,7 @@ private fun AgentIdentityCard(
                     }
                 }
 
-                // Avatar — tappable to change icon; color ring tappable to change color
+                // Avatar — tap to change icon; long-press to change accent colour
                 Spacer(Modifier.width(12.dp))
                 Box(contentAlignment = Alignment.BottomEnd) {
                     Box(
@@ -697,7 +709,10 @@ private fun AgentIdentityCard(
                             .clip(CircleShape)
                             .background(seedColor.copy(alpha = 0.20f))
                             .border(2.dp, seedColor.copy(alpha = 0.5f), CircleShape)
-                            .clickable(onClick = onChangeAvatarIcon),
+                            .combinedClickable(
+                                onClick = onChangeAvatarIcon,
+                                onLongClick = onChangeColor
+                            ),
                         contentAlignment = Alignment.Center
                     ) {
                         Icon(
@@ -707,14 +722,22 @@ private fun AgentIdentityCard(
                             modifier = Modifier.size(26.dp)
                         )
                     }
-                    // Small color swatch in corner of avatar — tap to change color
+                    // Ping-status dot — colour reflects server reachability; tap to re-ping
+                    // (long-press the avatar itself to change the accent colour)
+                    val pingDotColor = when (pingStatus) {
+                        ServerPingStatus.REACHABLE   -> Color(0xFF4CAF50) // green
+                        ServerPingStatus.NOT_OLLAMA  -> Color(0xFFFFC107) // amber
+                        ServerPingStatus.UNREACHABLE -> Color(0xFFF44336) // red
+                        ServerPingStatus.PINGING     -> Color(0xFF9E9E9E) // grey (loading)
+                        ServerPingStatus.UNKNOWN     -> Color(0xFF757575) // dark grey
+                    }
                     Box(
                         modifier = Modifier
                             .size(16.dp)
                             .clip(CircleShape)
-                            .background(seedColor)
+                            .background(pingDotColor)
                             .border(1.5.dp, MaterialTheme.colorScheme.surface, CircleShape)
-                            .clickable(onClick = onChangeColor)
+                            .clickable(onClick = onPingNow)
                     )
                 }
             }

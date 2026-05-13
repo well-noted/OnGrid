@@ -24,11 +24,15 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+
+/** Server reachability state shown by the avatar ping dot. */
+enum class ServerPingStatus { UNKNOWN, PINGING, REACHABLE, NOT_OLLAMA, UNREACHABLE }
 
 class AgentViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -95,8 +99,34 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
     private val _isDreaming = MutableStateFlow(false)
     val isDreaming: StateFlow<Boolean> = _isDreaming.asStateFlow()
 
+    /** Reachability of the server configured for this agent (used to colour the avatar dot). */
+    private val _pingStatus = MutableStateFlow(ServerPingStatus.UNKNOWN)
+    val pingStatus: StateFlow<ServerPingStatus> = _pingStatus.asStateFlow()
+
     fun selectAgent(agentId: String) {
         _selectedAgentId.value = agentId
+        _pingStatus.value = ServerPingStatus.UNKNOWN
+    }
+
+    /**
+     * Ping the server associated with [agentId].
+     * Uses the agent's own utility-model host if set, otherwise the global utility host.
+     * Updates [pingStatus] with the result.
+     */
+    fun pingAgentServer(agentId: String) = viewModelScope.launch {
+        val agent = agentRepo.getAgent(agentId) ?: return@launch
+        val settings = app.settingsRepository.settings.first()
+        val host = agent.utilityModelHost.ifBlank { settings.utilityModelHost }
+        if (host.isBlank()) {
+            _pingStatus.value = ServerPingStatus.UNKNOWN
+            return@launch
+        }
+        _pingStatus.value = ServerPingStatus.PINGING
+        _pingStatus.value = when (app.ollamaApi.ping(host)) {
+            com.ongrid.app.data.network.ServerPingResult.REACHABLE -> ServerPingStatus.REACHABLE
+            com.ongrid.app.data.network.ServerPingResult.NOT_OLLAMA -> ServerPingStatus.NOT_OLLAMA
+            com.ongrid.app.data.network.ServerPingResult.UNREACHABLE -> ServerPingStatus.UNREACHABLE
+        }
     }
 
     fun createAgent(

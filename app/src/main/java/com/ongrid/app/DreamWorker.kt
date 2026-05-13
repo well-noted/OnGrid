@@ -187,16 +187,39 @@ class DreamWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
                     emitLog("  ↳ Could not generate brief (no response from model)")
                 }
             } else {
-                val lastConvAt = conversations.maxOfOrNull { it.updatedAt } ?: agent.briefUpdatedAt
-                val review = app.utilityAgentRepository.reviewBriefForStaleTasks(
-                    utilHost, utilModel, agent.brief, agent.role, lastConvAt
-                )
-                if (review?.updatedBrief != null && review.changeDescription != "No changes") {
-                    app.agentRepository.updateBrief(agentId, review.updatedBrief)
-                    changeLog["brief_change"] = review.changeDescription
-                    emitLog("  ↳ Brief updated: ${review.changeDescription}")
+                // Check for conversations that have happened since the brief was last updated.
+                // If new activity exists, refresh the brief with that content. Otherwise fall
+                // back to stale-task archival.
+                val newConvs = conversations.filter { it.updatedAt > agent.briefUpdatedAt }
+                if (newConvs.isNotEmpty()) {
+                    emitLog("  ↳ ${newConvs.size} new conversation(s) since last brief — refreshing")
+                    val recentConv = newConvs.maxByOrNull { it.updatedAt }!!
+                    val msgs = app.database.messageDao().getByConversation(recentConv.id)
+                    val exchange = msgs.takeLast(10)
+                        .joinToString("\n") { "${it.role}: ${it.content.take(300)}" }
+                    val newBrief = app.utilityAgentRepository.updateAgentBrief(
+                        utilHost, utilModel, agent.brief, agent.role, agent.systemPrompt, exchange
+                    )
+                    if (!newBrief.isNullOrBlank() && newBrief != agent.brief) {
+                        app.agentRepository.updateBrief(agentId, newBrief)
+                        changeLog["brief_change"] = "Refreshed from recent activity"
+                        emitLog("  ↳ Brief refreshed")
+                    } else {
+                        emitLog("  ↳ Brief already up to date")
+                    }
                 } else {
-                    emitLog("  ↳ No stale tasks found")
+                    // No new conversations — scan the existing brief for stale open tasks.
+                    val lastConvAt = conversations.maxOfOrNull { it.updatedAt } ?: agent.briefUpdatedAt
+                    val review = app.utilityAgentRepository.reviewBriefForStaleTasks(
+                        utilHost, utilModel, agent.brief, agent.role, lastConvAt
+                    )
+                    if (review?.updatedBrief != null && review.updatedBrief != agent.brief) {
+                        app.agentRepository.updateBrief(agentId, review.updatedBrief)
+                        changeLog["brief_change"] = review.changeDescription
+                        emitLog("  ↳ Brief updated: ${review.changeDescription}")
+                    } else {
+                        emitLog("  ↳ Brief is current — no stale tasks")
+                    }
                 }
             }
         } else {
