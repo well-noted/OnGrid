@@ -166,33 +166,61 @@ class DreamWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
 
         // ── 2. Brief stale-task review ────────────────────────────────────────
         emitLog("  [2/4] Brief review")
-        if (agent.brief.isNotBlank() && agent.isAutoBriefEnabled) {
+        if (agent.isAutoBriefEnabled) {
             val conversations = app.conversationRepository.conversationsForAgent(agentId).first()
-            val lastConvAt = conversations.maxOfOrNull { it.updatedAt } ?: agent.briefUpdatedAt
-
-            val review = app.utilityAgentRepository.reviewBriefForStaleTasks(
-                utilHost, utilModel, agent.brief, agent.role, lastConvAt
-            )
-            if (review?.updatedBrief != null && review.changeDescription != "No changes") {
-                app.agentRepository.updateBrief(agentId, review.updatedBrief)
-                changeLog["brief_change"] = review.changeDescription
-                emitLog("  ↳ Brief updated: ${review.changeDescription}")
+            if (agent.brief.isBlank()) {
+                // No brief yet — generate one from the most recent conversation
+                emitLog("  ↳ Brief is empty — generating initial brief")
+                val recentConv = conversations.firstOrNull()
+                val exchange = if (recentConv != null) {
+                    val msgs = app.database.messageDao().getByConversation(recentConv.id)
+                    msgs.takeLast(10).joinToString("\n") { "${it.role}: ${it.content.take(300)}" }
+                } else ""
+                val newBrief = app.utilityAgentRepository.updateAgentBrief(
+                    utilHost, utilModel, "", agent.role, agent.systemPrompt, exchange
+                )
+                if (!newBrief.isNullOrBlank()) {
+                    app.agentRepository.updateBrief(agentId, newBrief)
+                    changeLog["brief_change"] = "Initial brief generated"
+                    emitLog("  ↳ Brief generated")
+                } else {
+                    emitLog("  ↳ Could not generate brief (no response from model)")
+                }
             } else {
-                emitLog("  ↳ No stale tasks found")
+                val lastConvAt = conversations.maxOfOrNull { it.updatedAt } ?: agent.briefUpdatedAt
+                val review = app.utilityAgentRepository.reviewBriefForStaleTasks(
+                    utilHost, utilModel, agent.brief, agent.role, lastConvAt
+                )
+                if (review?.updatedBrief != null && review.changeDescription != "No changes") {
+                    app.agentRepository.updateBrief(agentId, review.updatedBrief)
+                    changeLog["brief_change"] = review.changeDescription
+                    emitLog("  ↳ Brief updated: ${review.changeDescription}")
+                } else {
+                    emitLog("  ↳ No stale tasks found")
+                }
             }
         } else {
-            emitLog("  ↳ Skipped (auto-brief disabled or brief empty)")
+            emitLog("  ↳ Skipped (auto-brief disabled)")
         }
 
         // ── 3. Mood calculation ───────────────────────────────────────────────
         emitLog("  [3/4] Mood calculation")
         if (agent.isMoodTrackingEnabled) {
             val conversations = app.conversationRepository.conversationsForAgent(agentId).first()
-            val recentConv = conversations.firstOrNull()
-            if (recentConv != null) {
-                val messages = app.database.messageDao().getByConversation(recentConv.id)
-                val last5 = messages.takeLast(10)
-                val exchange = last5.joinToString("\n") { "${it.role}: ${it.content.take(300)}" }
+            // Find the last assistant message the agent sent across recent conversations
+            // (search the most recent conversations first, up to 3, to find a real reply)
+            var lastAssistantContent: String? = null
+            for (conv in conversations.take(3)) {
+                val msgs = app.database.messageDao().getByConversation(conv.id)
+                val lastAssistant = msgs.lastOrNull { it.role == "assistant" }
+                if (lastAssistant != null) {
+                    lastAssistantContent = lastAssistant.content
+                    break
+                }
+            }
+            if (lastAssistantContent != null) {
+                // Build a brief exchange around that message for context
+                val exchange = "Assistant: ${lastAssistantContent.take(600)}"
                 val newMood = app.utilityAgentRepository.calculateMood(utilHost, utilModel, exchange)
                 if (newMood != null && newMood != agent.currentMood) {
                     moodChange = "${agent.currentMood} -> $newMood"
@@ -202,6 +230,8 @@ class DreamWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
                 } else {
                     emitLog("  ↳ Mood unchanged: ${agent.currentMood}")
                 }
+            } else {
+                emitLog("  ↳ No assistant messages found to assess mood")
             }
         } else {
             emitLog("  ↳ Skipped (mood tracking disabled)")

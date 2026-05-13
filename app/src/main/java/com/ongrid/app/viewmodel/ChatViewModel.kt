@@ -405,12 +405,21 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             val convId = ensureConversation(server, userMsg)
             repo.saveMessage(convId, userMsg)
 
+            // Guards a single auto-retry when the server returns an empty turn (silent drop).
+            var hasRetried = false
+            // True once the server sends any tokens, tool calls, or tool results — distinguishes
+            // a true silent drop (nothing at all) from a legitimate empty follow-up after tools.
+            var hadAnyServerActivity = false
+
             for (event in app.chatServiceChannel) {
                 when (event) {
-                    is ChatServiceEvent.Token ->
+                    is ChatServiceEvent.Token -> {
+                        hadAnyServerActivity = true
                         updateStreamingMessage(event.msgId, event.content)
+                    }
 
                     is ChatServiceEvent.ThinkingToken -> {
+                        hadAnyServerActivity = true
                         _uiState.value = _uiState.value.copy(
                             streamingThinkingContent = event.thinking,
                             // Auto-sync the button to ON so the user can see thinking is active
@@ -419,14 +428,17 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                         )
                     }
 
-                    is ChatServiceEvent.FinalizeMessage ->
+                    is ChatServiceEvent.FinalizeMessage -> {
+                        hadAnyServerActivity = true
                         if (event.content.isBlank()) {
                             _messages.value = _messages.value.filter { it.id != event.msgId }
                         } else {
                             finalizeMessage(event.msgId, event.content)
                         }
+                    }
 
                     is ChatServiceEvent.AppendMessage -> {
+                        hadAnyServerActivity = true
                         _messages.value = _messages.value + event.message
                         repo.saveMessage(convId, event.message)
                     }
@@ -472,6 +484,20 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
                         // Persist the finalized assistant message.
                         val finalMsg = _messages.value.find { it.id == event.msgId }
+
+                        // Silent-drop retry: the server completed the turn but returned no content
+                        // and no error, and sent no tokens or tool activity at all.
+                        // Only retry on a true cold silent drop — not when the model legitimately
+                        // returns empty text after using tools.
+                        if (event.error == null && finalMsg?.content.isNullOrBlank()
+                            && !hadAnyServerActivity && !hasRetried) {
+                            hasRetried = true
+                            _messages.value = _messages.value
+                                .filter { it.id != event.msgId && it.id != userMsg.id }
+                            viewModelScope.launch { sendMessage(userMsg.content) }
+                            break
+                        }
+
                         if (finalMsg != null) repo.saveMessage(convId, finalMsg)
                         repo.touchConversation(convId)
 
@@ -561,11 +587,26 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                                 val currentBrief = currentAgent.brief
                                 val existingMemories = _uiState.value.agentMemories
                                     .map { it.content }
-                                // Richer exchange for mood — captures more assistant content
+                                // Richer exchange for mood — last 3 turns + tail of current response
+                                // (agent may express feelings at the END of a long message)
                                 val moodExchange = buildString {
-                                    append("User: ${userMsg.content.take(600)}")
-                                    val assistantFull = finalMsg?.content?.take(800) ?: ""
-                                    if (assistantFull.isNotBlank()) append("\nAssistant: $assistantFull")
+                                    // Include up to 3 prior turns for emotional context
+                                    val allMsgs = _messages.value
+                                    val priorTurns = allMsgs.dropLast(1)
+                                        .takeLast(6)
+                                        .filter { it.role == com.ongrid.app.data.model.MessageRole.USER || it.role == com.ongrid.app.data.model.MessageRole.ASSISTANT }
+                                    priorTurns.forEach { m ->
+                                        val label = if (m.role == com.ongrid.app.data.model.MessageRole.USER) "User" else "Assistant"
+                                        append("$label: ${m.content.take(300)}\n")
+                                    }
+                                    // Current turn: full user message + TAIL of assistant response
+                                    // so explicit mood statements at the end aren't truncated
+                                    append("User: ${userMsg.content.take(400)}\n")
+                                    val assistantFull = finalMsg?.content ?: ""
+                                    val assistantExcerpt = if (assistantFull.length > 900)
+                                        assistantFull.take(450) + "…" + assistantFull.takeLast(450)
+                                    else assistantFull
+                                    if (assistantExcerpt.isNotBlank()) append("Assistant: $assistantExcerpt")
                                 }
 
                                 // Run brief update, memory extraction, and mood in parallel

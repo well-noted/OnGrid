@@ -358,20 +358,26 @@ ${conversationExchange.take(1200)}"""
             messages = listOf(
                 OllamaChatMessage(
                     role = "user",
-                    content = """Analyse the emotional tone of this conversation exchange from the perspective of the assistant.
-Choose exactly one label that best describes the assistant's current disposition:
+                    content = """Analyse the emotional state of the assistant in this conversation.
+If the assistant explicitly states how they feel (e.g. "I feel energised", "I'm excited"), that self-report is the primary signal.
+Otherwise infer from tone and word choice.
+Choose exactly one label that best fits:
 Neutral, Enthusiastic, Curious, Focused, Reflective, Frustrated, Meticulous, Excited, Tired.
-Reply with only the single label word, nothing else.
+Reply with ONLY the single label word — no punctuation, no explanation.
 
-Exchange:
+Conversation:
 ${recentExchange.take(2000)}"""
                 )
             ),
             stream = false
         )
         val raw = api.chatOnce(baseUrl, request)?.trim() ?: return null
+        // Strip any trailing punctuation/whitespace the model may add, then find the matching label.
+        val normalized = raw.trimEnd('.', '!', ',', ':', ' ')
         val allowed = setOf("Neutral", "Enthusiastic", "Curious", "Focused", "Reflective", "Frustrated", "Meticulous", "Excited", "Tired")
-        allowed.firstOrNull { it.equals(raw, ignoreCase = true) }
+        // Exact match first, then contained-word match for robustness.
+        allowed.firstOrNull { it.equals(normalized, ignoreCase = true) }
+            ?: allowed.firstOrNull { normalized.contains(it, ignoreCase = true) }
     } catch (e: Exception) {
         Log.w(TAG, "calculateMood failed: ${e.message}")
         null
