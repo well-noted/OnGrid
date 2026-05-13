@@ -28,8 +28,10 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 data class ChatUiState(
     val isLoading: Boolean = false,
@@ -77,7 +79,17 @@ data class ChatUiState(
     /** Resolved utility model name (falls back to conversation model). */
     val utilityModelName: String = "",
     /** Pre-filled text to populate the chat input (set when app is launched via share or shortcut). */
-    val prefillText: String = ""
+    val prefillText: String = "",
+    /**
+     * Semantic recall snippets retrieved from past conversations for the current agent.
+     * Injected into context by [buildOllamaHistory] and cleared after each turn.
+     */
+    val semanticRecallSnippets: List<String> = emptyList(),
+    /**
+     * Pre-built recent-context block (conversations from the last 48 h) for the current agent.
+     * Built in [loadAgent] and injected into context by [buildOllamaHistory].
+     */
+    val recentContextSnippet: String = ""
 ) {
     /** True when extended reasoning is enabled for this conversation. */
     val isThinkingOn: Boolean
@@ -93,6 +105,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     private val utilityAgentRepo = app.utilityAgentRepository
     private val settingsRepo = app.settingsRepository
     private val agentRepo = app.agentRepository
+    private val embeddingRepo = app.embeddingRepository
 
     private val _messages = MutableStateFlow<List<ChatMessage>>(emptyList())
     val messages: StateFlow<List<ChatMessage>> = _messages.asStateFlow()
@@ -588,6 +601,13 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                                 }
                             }
                         }
+
+                        // Index conversation for semantic recall (fire-and-forget)
+                        val postAgent = _uiState.value.currentAgent
+                        if (postAgent?.isSemanticRecallEnabled == true) {
+                            indexCompletedConversation(convId, postAgent.id)
+                        }
+
                         break
                     }
                 }
@@ -697,6 +717,94 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         _uiState.value = _uiState.value.copy(prefillText = text)
     }
 
+    // ── Semantic Recall ───────────────────────────────────────────────────────
+
+    /**
+     * Pre-fetch semantic recall results for [userText] from the current agent's indexed
+     * conversations and store them in [ChatUiState.semanticRecallSnippets].
+     *
+     * Call this from the UI when the user's input changes (debounced) so that results are ready
+     * by the time [sendMessage] is called.  If the agent has semantic recall disabled, or the
+     * embedding call fails, the state is simply cleared — no crash, no delay at send time.
+     */
+    fun prepareSemanticRecall(userText: String) {
+        val agent = _uiState.value.currentAgent ?: return
+        if (!agent.isSemanticRecallEnabled) return
+        if (userText.isBlank()) return
+
+        val baseUrl = _uiState.value.utilityBaseUrl
+        val model = _uiState.value.utilityModelName
+        if (baseUrl.isBlank() || model.isBlank()) return
+
+        viewModelScope.launch {
+            val snippets = withContext(Dispatchers.IO) {
+                embeddingRepo.search(
+                    agentId = agent.id,
+                    queryText = userText,
+                    baseUrl = baseUrl,
+                    modelName = model
+                )
+            }
+            _uiState.value = _uiState.value.copy(semanticRecallSnippets = snippets)
+        }
+    }
+
+    /**
+     * Toggle semantic recall for the current agent and index all existing agent conversations
+     * when enabling for the first time.
+     */
+    fun updateSemanticRecallEnabled(enabled: Boolean) {
+        val agentId = _uiState.value.currentAgentId ?: return
+        viewModelScope.launch {
+            agentRepo.updateSemanticRecallEnabled(agentId, enabled)
+            loadAgent(agentId)
+
+            if (enabled) {
+                // Index all existing conversations for this agent so recall is useful immediately.
+                indexAgentConversations(agentId)
+            }
+        }
+    }
+
+    /** Toggle the recent-conversation-context (last 48 h) feature for the current agent. */
+    fun updateRecentContextEnabled(enabled: Boolean) {
+        val agentId = _uiState.value.currentAgentId ?: return
+        viewModelScope.launch {
+            agentRepo.updateRecentContextEnabled(agentId, enabled)
+            loadAgent(agentId)
+        }
+    }
+
+    /** Index all conversations belonging to [agentId] that have not yet been indexed. */
+    private suspend fun indexAgentConversations(agentId: String) {
+        val baseUrl = _uiState.value.utilityBaseUrl
+        val model = _uiState.value.utilityModelName
+        if (baseUrl.isBlank() || model.isBlank()) return
+
+        withContext(Dispatchers.IO) {
+            val conversations = repo.allConversations.first()
+                .filter { it.agentId == agentId }
+            for (conv in conversations) {
+                val messages = app.database.messageDao().getByConversation(conv.id)
+                embeddingRepo.indexConversation(agentId, conv.id, messages, baseUrl, model)
+            }
+        }
+    }
+
+    /** Index a completed conversation exchange for future semantic recall. Called post-turn. */
+    private fun indexCompletedConversation(convId: String, agentId: String) {
+        val baseUrl = _uiState.value.utilityBaseUrl
+        val model = _uiState.value.utilityModelName
+        if (baseUrl.isBlank() || model.isBlank()) return
+
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) {
+                val messages = app.database.messageDao().getByConversation(convId)
+                embeddingRepo.reindexConversation(agentId, convId, messages, baseUrl, model)
+            }
+        }
+    }
+
     /** Pin a message to the current agent's memory. */
     fun pinMessageToAgentMemory(messageId: String, messageContent: String) {
         val agentId = _uiState.value.currentAgentId ?: return
@@ -725,12 +833,36 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         val globalModel = globalSettings.utilityModelName.ifBlank { currentModel }
         val (resolvedHost, resolvedModel) = agentRepo.resolveUtilityModel(agentId, globalHost, globalModel)
 
+        // Build recent-context snippet (last 48 h of this agent's conversations)
+        val recentContextSnippet = if (agent.isRecentContextEnabled) {
+            val since48h = System.currentTimeMillis() - 48L * 60 * 60 * 1000
+            val recentConvs = withContext(Dispatchers.IO) {
+                app.database.conversationDao().getRecentByAgent(agentId, since48h)
+            }.filter { it.id != currentConversationId }
+            if (recentConvs.isEmpty()) ""
+            else {
+                val sb = StringBuilder("What you've been working on recently (last 48 hours):")
+                for (conv in recentConvs.take(5)) {
+                    val msgs = withContext(Dispatchers.IO) {
+                        app.database.messageDao().getByConversation(conv.id)
+                    }
+                    val lastUser = msgs.lastOrNull { it.role == "user" }?.content?.take(250)
+                    val lastAssistant = msgs.lastOrNull { it.role == "assistant" }?.content?.take(250)
+                    sb.append("\n\u2022 ${conv.title}")
+                    if (!lastUser.isNullOrBlank()) sb.append("\n  You: ${lastUser.trimEnd()}")
+                    if (!lastAssistant.isNullOrBlank()) sb.append("\n  You responded: ${lastAssistant.trimEnd()}")
+                }
+                sb.toString()
+            }
+        } else ""
+
         _uiState.value = _uiState.value.copy(
             currentAgentId = agentId,
             currentAgent = agent,
             agentMemories = memories,
             utilityBaseUrl = resolvedHost,
-            utilityModelName = resolvedModel
+            utilityModelName = resolvedModel,
+            recentContextSnippet = recentContextSnippet
         )
 
         // Apply agent's default disabled tools
@@ -916,6 +1048,27 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 injected += OllamaChatMessage(
                     role = "system",
                     content = "What you remember from previous conversations:\n$bullet"
+                )
+            }
+
+            // 4. Semantic recall — relevant excerpts from past conversations
+            val recallSnippets = _uiState.value.semanticRecallSnippets
+            if (agent.isSemanticRecallEnabled && recallSnippets.isNotEmpty()) {
+                val excerpts = recallSnippets.joinToString("\n\n---\n\n")
+                injected += OllamaChatMessage(
+                    role = "system",
+                    content = "Relevant excerpts from your previous conversations:\n\n$excerpts"
+                )
+                // Consume snippets so they don't repeat on the next turn
+                _uiState.value = _uiState.value.copy(semanticRecallSnippets = emptyList())
+            }
+
+            // 5. Recent conversation context — titles and last exchange from the past 48 h
+            val recentSnippet = _uiState.value.recentContextSnippet
+            if (agent.isRecentContextEnabled && recentSnippet.isNotEmpty()) {
+                injected += OllamaChatMessage(
+                    role = "system",
+                    content = recentSnippet
                 )
             }
         } else {

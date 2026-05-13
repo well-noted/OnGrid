@@ -12,6 +12,7 @@ class ConversationRepository(private val db: AppDatabase) {
 
     val allProjects: Flow<List<ProjectEntity>> = db.projectDao().getAllProjects()
     val allConversations: Flow<List<ConversationEntity>> = db.conversationDao().getAllConversations()
+    val standaloneConversations: Flow<List<ConversationEntity>> = db.conversationDao().standaloneConversations()
 
     // ── Projects ──────────────────────────────────────────────────────────────
 

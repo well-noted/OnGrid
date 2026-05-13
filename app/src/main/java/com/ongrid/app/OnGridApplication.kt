@@ -21,8 +21,11 @@ import com.ongrid.app.data.local.MIGRATION_5_6
 import com.ongrid.app.data.local.MIGRATION_6_7
 import com.ongrid.app.data.local.MIGRATION_7_8
 import com.ongrid.app.data.local.MIGRATION_8_9
+import com.ongrid.app.data.local.MIGRATION_10_11
+import com.ongrid.app.data.local.MIGRATION_9_10
 import com.ongrid.app.data.repository.AgentRepository
 import com.ongrid.app.data.repository.ConversationRepository
+import com.ongrid.app.data.repository.EmbeddingRepository
 import com.ongrid.app.data.repository.FormMemoryRepository
 import com.ongrid.app.data.repository.McpRepository
 import com.ongrid.app.data.repository.OllamaRepository
@@ -144,7 +147,7 @@ class OnGridApplication : Application() {
 
     val database: AppDatabase by lazy {
         Room.databaseBuilder(this, AppDatabase::class.java, "ongrid.db")
-            .addMigrations(MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9)
+            .addMigrations(MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11)
             .fallbackToDestructiveMigration()
             .build()
     }
@@ -155,6 +158,9 @@ class OnGridApplication : Application() {
     val utilityAgentRepository: UtilityAgentRepository by lazy { UtilityAgentRepository(ollamaApi) }
     val agentRepository: AgentRepository by lazy {
         AgentRepository(database.agentDao(), database.agentMemoryDao(), database.dreamLogDao())
+    }
+    val embeddingRepository: EmbeddingRepository by lazy {
+        EmbeddingRepository(database.conversationEmbeddingDao(), ollamaApi)
     }
     val dreamScheduleRepository: DreamScheduleRepository by lazy {
         DreamScheduleRepository(database.dreamScheduleDao())

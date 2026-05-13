@@ -1,5 +1,7 @@
 package com.ongrid.app.ui.screens
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -9,23 +11,24 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
-import androidx.compose.material.icons.filled.Chat
-import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.ArrowBack
+import androidx.compose.material.icons.outlined.Edit
+import androidx.compose.material.icons.outlined.MoreVert
+import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -47,16 +50,20 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontStyle
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import com.google.gson.Gson
-import com.google.gson.reflect.TypeToken
-import com.ongrid.app.data.local.SavedServerEntity
+import androidx.compose.ui.unit.sp
 import com.ongrid.app.data.model.OllamaServer
 import com.ongrid.app.viewmodel.ConversationListViewModel
 import com.ongrid.app.viewmodel.ServerSetupState
 import kotlinx.coroutines.launch
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -69,21 +76,16 @@ fun ProjectDetailScreen(
 ) {
     val projects by viewModel.projects.collectAsState()
     val project = projects.find { it.id == projectId }
-
     val conversations by viewModel.displayedConversations.collectAsState()
-    val memories by viewModel.selectedProjectMemories.collectAsState()
-
     val serverSetupState by viewModel.serverSetupState.collectAsState()
-    val savedServers: List<SavedServerEntity> =
-        (serverSetupState as? ServerSetupState.Ready)?.servers ?: emptyList()
 
-    var showEditSheet by remember { mutableStateOf(false) }
-    var showModelPicker by remember { mutableStateOf(false) }
-    val editSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    val bottomSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    var showBriefEditSheet by remember { mutableStateOf(false) }
+    var briefEditText by remember { mutableStateOf("") }
+    val briefEditSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val scope = rememberCoroutineScope()
 
-    // Select this project so displayedConversations and selectedProjectMemories are filtered to it
+    val projectColor = remember(projectId) { projectCardColor(projectId) }
+
     LaunchedEffect(projectId) {
         viewModel.selectProject(projectId)
     }
@@ -92,168 +94,239 @@ fun ProjectDetailScreen(
         topBar = {
             TopAppBar(
                 title = {
-                    Column {
-                        Text(
-                            project?.name ?: "Project",
-                            style = MaterialTheme.typography.titleMedium,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                        if (!project?.description.isNullOrBlank()) {
-                            Text(
-                                project!!.description,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        }
-                    }
+                    Text(
+                        project?.name ?: "Project",
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
                 },
                 navigationIcon = {
                     IconButton(onClick = onNavigateBack) {
-                        Icon(Icons.Default.ArrowBack, contentDescription = "Back")
+                        Icon(Icons.Outlined.ArrowBack, contentDescription = "Back")
                     }
                 },
                 actions = {
-                    IconButton(onClick = { showEditSheet = true }) {
-                        Icon(Icons.Default.Edit, contentDescription = "Edit project")
+                    IconButton(onClick = { /* overflow menu placeholder */ }) {
+                        Icon(Icons.Outlined.MoreVert, contentDescription = "More")
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.surface
                 )
             )
-        },
-        floatingActionButton = {
-            FloatingActionButton(onClick = { showModelPicker = true }) {
-                Icon(Icons.Default.Chat, contentDescription = "New chat in project")
-            }
         }
     ) { innerPadding ->
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(innerPadding),
-            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
+                .padding(innerPadding)
         ) {
-            // ── Memories ─────────────────────────────────────────────────────
+            // ── Hero card ─────────────────────────────────────────────────────
             item {
-                Text(
-                    "Project Memories",
-                    style = MaterialTheme.typography.titleSmall,
-                    modifier = Modifier.padding(top = 8.dp)
-                )
-            }
-            if (memories.isEmpty()) {
-                item {
-                    Text(
-                        "No memories yet — memories are extracted automatically after conversations in this project.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
-                    )
-                }
-            } else {
-                items(memories, key = { it.id }) { memory ->
-                    Card(
-                        modifier = Modifier.fillMaxWidth(),
-                        colors = CardDefaults.cardColors(
-                            containerColor = MaterialTheme.colorScheme.secondaryContainer
+                Card(
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(containerColor = projectColor),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 14.dp, vertical = 14.dp)
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Text(
+                            "Project",
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Medium,
+                            letterSpacing = 0.08.sp,
+                            color = Color.White.copy(alpha = 0.7f)
                         )
-                    ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(start = 12.dp, top = 8.dp, bottom = 8.dp, end = 4.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
+                        Text(
+                            project?.name ?: "",
+                            fontSize = 20.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = Color.White,
+                            modifier = Modifier.padding(top = 2.dp)
+                        )
+                        if (!project?.description.isNullOrBlank()) {
                             Text(
-                                memory.content,
-                                style = MaterialTheme.typography.bodyMedium,
-                                modifier = Modifier.weight(1f),
-                                color = MaterialTheme.colorScheme.onSecondaryContainer
+                                project!!.description,
+                                fontSize = 13.sp,
+                                color = Color.White.copy(alpha = 0.85f),
+                                lineHeight = 18.sp,
+                                modifier = Modifier.padding(top = 4.dp, bottom = 14.dp)
                             )
-                            IconButton(onClick = { viewModel.deleteProjectMemory(memory.id) }) {
-                                Icon(
-                                    Icons.Default.Delete,
-                                    contentDescription = "Delete memory",
-                                    tint = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.6f)
-                                )
-                            }
+                        } else {
+                            Spacer(modifier = Modifier.height(14.dp))
+                        }
+                        Button(
+                            onClick = {
+                                val state = serverSetupState
+                                if (state is ServerSetupState.Ready) {
+                                    val last = state.lastUsed
+                                    if (last.serverHost != null && last.modelName != null) {
+                                        onNewChat(
+                                            OllamaServer(host = last.serverHost, port = last.serverPort),
+                                            last.modelName
+                                        )
+                                    }
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = Color.Black.copy(alpha = 0.18f),
+                                contentColor = Color.White
+                            ),
+                            shape = RoundedCornerShape(10.dp)
+                        ) {
+                            Text("Start a conversation", fontSize = 14.sp, fontWeight = FontWeight.Medium)
                         }
                     }
                 }
             }
 
-            // ── Conversations ─────────────────────────────────────────────────
+            // ── Brief card ────────────────────────────────────────────────────
             item {
-                Text(
-                    "Conversations (${conversations.size})",
-                    style = MaterialTheme.typography.titleSmall,
-                    modifier = Modifier.padding(top = 8.dp)
-                )
-            }
-            if (conversations.isEmpty()) {
-                item {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 24.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 14.dp)
+                        .padding(bottom = 10.dp),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Column(modifier = Modifier.padding(14.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                "Brief",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Medium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            IconButton(
+                                onClick = {
+                                    briefEditText = project?.description ?: ""
+                                    showBriefEditSheet = true
+                                },
+                                modifier = Modifier.size(24.dp)
+                            ) {
+                                Icon(
+                                    Icons.Outlined.Edit,
+                                    contentDescription = "Edit brief",
+                                    modifier = Modifier.size(16.dp),
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
                         Text(
-                            "No conversations yet — tap the button below to start one.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
-                            textAlign = TextAlign.Center
+                            "The utility agent will build this after your first conversation",
+                            fontSize = 13.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            fontStyle = FontStyle.Italic
                         )
                     }
                 }
+            }
+
+            // ── Skills & tools row ─────────────────────────────────────────────
+            item {
+                Text(
+                    "Skills & Tools",
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp)
+                )
+                LazyRow(
+                    contentPadding = PaddingValues(horizontal = 14.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    item {
+                        AssistChip(
+                            onClick = { /* open skill selection */ },
+                            label = { Text("Add skill") },
+                            leadingIcon = {
+                                Icon(
+                                    Icons.Outlined.Add,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
+                        )
+                    }
+                }
+                Spacer(modifier = Modifier.height(6.dp))
+            }
+
+            // ── Conversations section ──────────────────────────────────────────
+            item {
+                Text(
+                    "Conversations",
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp)
+                )
+            }
+
+            if (conversations.isEmpty()) {
+                item {
+                    Text(
+                        "No conversations yet",
+                        fontSize = 13.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp)
+                    )
+                }
             } else {
                 items(conversations, key = { it.id }) { conversation ->
-                    Card(
-                        onClick = { onOpenConversation(conversation.id) },
-                        modifier = Modifier.fillMaxWidth(),
-                        colors = CardDefaults.cardColors(
-                            containerColor = MaterialTheme.colorScheme.surfaceVariant
-                        )
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onOpenConversation(conversation.id) }
+                            .padding(horizontal = 14.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
+                        Box(
+                            modifier = Modifier
+                                .size(8.dp)
+                                .clip(CircleShape)
+                                .background(projectColor)
+                        )
                         Column(
                             modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 16.dp, vertical = 12.dp)
+                                .weight(1f)
+                                .padding(start = 10.dp)
                         ) {
                             Text(
                                 conversation.title,
-                                style = MaterialTheme.typography.bodyLarge,
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Medium,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
                             )
-                            Spacer(Modifier.height(2.dp))
                             Text(
-                                "${conversation.modelName.substringBefore(":")} · ${conversation.serverHost}",
-                                style = MaterialTheme.typography.bodySmall,
+                                formatConversationDate(conversation.updatedAt),
+                                fontSize = 11.sp,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
                     }
+                    HorizontalDivider(thickness = 0.5.dp)
                 }
             }
 
-            item { Spacer(Modifier.height(80.dp)) } // FAB clearance
+            item { Spacer(modifier = Modifier.height(80.dp)) }
         }
     }
 
-    // ── Edit project sheet ────────────────────────────────────────────────────
-    if (showEditSheet) {
-        var editedName by remember(project?.name) { mutableStateOf(project?.name ?: "") }
-        var editedDescription by remember(project?.description) { mutableStateOf(project?.description ?: "") }
+    // ── Brief edit bottom sheet ────────────────────────────────────────────────
+    if (showBriefEditSheet) {
         ModalBottomSheet(
             onDismissRequest = {
-                scope.launch { editSheetState.hide() }.invokeOnCompletion { showEditSheet = false }
+                scope.launch { briefEditSheetState.hide() }.invokeOnCompletion { showBriefEditSheet = false }
             },
-            sheetState = editSheetState
+            sheetState = briefEditSheetState
         ) {
             Column(
                 modifier = Modifier
@@ -262,94 +335,30 @@ fun ProjectDetailScreen(
                     .padding(bottom = 24.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                Text("Edit Project", style = MaterialTheme.typography.titleMedium)
+                Text("Edit Brief", style = MaterialTheme.typography.titleMedium)
                 OutlinedTextField(
-                    value = editedName,
-                    onValueChange = { editedName = it },
-                    label = { Text("Name") },
+                    value = briefEditText,
+                    onValueChange = { briefEditText = it },
                     modifier = Modifier.fillMaxWidth(),
-                    singleLine = true,
-                    shape = RoundedCornerShape(12.dp)
-                )
-                OutlinedTextField(
-                    value = editedDescription,
-                    onValueChange = { editedDescription = it },
-                    label = { Text("Description (optional)") },
-                    modifier = Modifier.fillMaxWidth(),
-                    maxLines = 3,
+                    placeholder = { Text("Describe the goal and context of this project.") },
+                    minLines = 8,
                     shape = RoundedCornerShape(12.dp)
                 )
                 Button(
                     onClick = {
-                        if (editedName.isNotBlank()) {
-                            viewModel.updateProject(projectId, editedName.trim(), editedDescription.trim())
+                        if (project != null) {
+                            viewModel.updateProject(projectId, project.name, briefEditText.trim())
                         }
-                        scope.launch { editSheetState.hide() }.invokeOnCompletion { showEditSheet = false }
+                        scope.launch { briefEditSheetState.hide() }.invokeOnCompletion { showBriefEditSheet = false }
                     },
-                    modifier = Modifier.fillMaxWidth(),
-                    enabled = editedName.isNotBlank()
+                    modifier = Modifier.fillMaxWidth()
                 ) {
                     Text("Save")
                 }
             }
         }
     }
-
-    // ── Model picker for new chat ─────────────────────────────────────────────
-    if (showModelPicker) {
-        ModalBottomSheet(
-            onDismissRequest = {
-                scope.launch { bottomSheetState.hide() }.invokeOnCompletion { showModelPicker = false }
-            },
-            sheetState = bottomSheetState
-        ) {
-            Text(
-                "Start chat in \"${project?.name ?: "project"}\"",
-                style = MaterialTheme.typography.titleMedium,
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
-            )
-            HorizontalDivider()
-            Column(
-                modifier = Modifier
-                    .heightIn(max = 450.dp)
-                    .verticalScroll(rememberScrollState())
-            ) {
-                savedServers.forEach { entity ->
-                    val models: List<String> = try {
-                        Gson().fromJson(entity.modelsJson, object : TypeToken<List<String>>() {}.type)
-                    } catch (e: Exception) { emptyList() }
-                    Text(
-                        entity.displayName,
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(start = 16.dp, top = 12.dp, end = 16.dp, bottom = 4.dp)
-                    )
-                    models.forEach { modelName ->
-                        Card(
-                            onClick = {
-                                scope.launch { bottomSheetState.hide() }.invokeOnCompletion {
-                                    showModelPicker = false
-                                    onNewChat(OllamaServer(host = entity.host, port = entity.port), modelName)
-                                }
-                            },
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 8.dp, vertical = 2.dp),
-                            colors = CardDefaults.cardColors(
-                                containerColor = MaterialTheme.colorScheme.surfaceVariant
-                            )
-                        ) {
-                            Text(
-                                modelName,
-                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
-                                style = MaterialTheme.typography.bodyMedium
-                            )
-                        }
-                    }
-                    HorizontalDivider(modifier = Modifier.padding(top = 8.dp))
-                }
-                Spacer(Modifier.height(16.dp))
-            }
-        }
-    }
 }
+
+private fun formatConversationDate(epochMillis: Long): String =
+    SimpleDateFormat("MMM d, yyyy", Locale.getDefault()).format(Date(epochMillis))

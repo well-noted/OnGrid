@@ -20,6 +20,7 @@ private val AUTO_TAGGING_ENABLED = booleanPreferencesKey("auto_tagging_enabled")
 private val PROJECT_MEMORY_ENABLED = booleanPreferencesKey("project_memory_enabled")
 private val SKILL_SUGGESTION_ENABLED = booleanPreferencesKey("skill_suggestion_enabled")
 private val CONVERSATION_SIMILARITY_ENABLED = booleanPreferencesKey("conversation_similarity_enabled")
+private val LAST_TAB_KEY = stringPreferencesKey("last_active_tab")
 
 data class UtilitySettings(
     val utilityAgentEnabled: Boolean = true,
@@ -76,5 +77,11 @@ class SettingsRepository(private val context: Context) {
 
     suspend fun setConversationSimilarityEnabled(enabled: Boolean) {
         context.settingsDataStore.edit { it[CONVERSATION_SIMILARITY_ENABLED] = enabled }
+    }
+
+    val lastActiveTab: Flow<String> = context.settingsDataStore.data.map { it[LAST_TAB_KEY] ?: "chat" }
+
+    suspend fun saveLastActiveTab(tab: String) {
+        context.settingsDataStore.edit { it[LAST_TAB_KEY] = tab }
     }
 }

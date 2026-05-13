@@ -207,6 +207,14 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         agentRepo.resetMood(agentId)
     }
 
+    fun updateSemanticRecallEnabled(agentId: String, enabled: Boolean) = viewModelScope.launch {
+        agentRepo.updateSemanticRecallEnabled(agentId, enabled)
+    }
+
+    fun updateRecentContextEnabled(agentId: String, enabled: Boolean) = viewModelScope.launch {
+        agentRepo.updateRecentContextEnabled(agentId, enabled)
+    }
+
     /**
      * Schedule a one-time DreamWorker to run immediately ("Dream Now" manual trigger).
      * The [isDreaming] state is updated optimistically and reset once the WorkManager

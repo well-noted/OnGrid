@@ -35,6 +35,17 @@ data class OllamaVersionResponse(
     val version: String = ""
 )
 
+/** Request body for POST /api/embed. */
+data class OllamaEmbedRequest(
+    val model: String,
+    val input: String
+)
+
+/** Response from POST /api/embed. Each inner list is an embedding vector. */
+data class OllamaEmbedResponse(
+    val embeddings: List<List<Float>> = emptyList()
+)
+
 /**
  * Response from POST /api/show — contains model capabilities among other metadata.
  * The `capabilities` list may include "completion", "tools", "thinking", etc.

@@ -4,6 +4,8 @@ import android.util.Log
 import com.google.gson.Gson
 import com.ongrid.app.data.model.OllamaChatRequest
 import com.ongrid.app.data.model.OllamaChatResponse
+import com.ongrid.app.data.model.OllamaEmbedRequest
+import com.ongrid.app.data.model.OllamaEmbedResponse
 import com.ongrid.app.data.model.OllamaShowResponse
 import com.ongrid.app.data.model.OllamaTagsResponse
 import com.ongrid.app.data.model.OllamaVersionResponse
@@ -127,4 +129,28 @@ class OllamaApi(private val client: OkHttpClient) {
             }
         }
     }.flowOn(Dispatchers.IO)
+
+    /**
+     * Generate an embedding vector for [text] using the specified model.
+     * Returns the first (and typically only) embedding, or null on any error.
+     * Uses POST /api/embed (Ollama ≥ 0.1.26).
+     */
+    suspend fun embed(baseUrl: String, modelName: String, text: String): List<Float>? =
+        withContext(Dispatchers.IO) {
+            try {
+                val body = gson.toJson(OllamaEmbedRequest(model = modelName, input = text))
+                    .toRequestBody(JSON_MEDIA_TYPE)
+                val request = Request.Builder().url("$baseUrl/api/embed").post(body).build()
+                client.newCall(request).execute().use { response ->
+                    if (!response.isSuccessful) return@withContext null
+                    val responseBody = response.body?.string() ?: return@withContext null
+                    gson.fromJson(responseBody, OllamaEmbedResponse::class.java)
+                        ?.embeddings
+                        ?.firstOrNull()
+                }
+            } catch (e: IOException) {
+                Log.d(TAG, "embed failed for $baseUrl/$modelName: ${e.message}")
+                null
+            }
+        }
 }

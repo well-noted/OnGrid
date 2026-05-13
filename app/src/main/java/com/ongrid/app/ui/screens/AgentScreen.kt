@@ -493,10 +493,12 @@ fun AgentScreen(
             agent = currentAgent,
             isDreaming = isDreaming,
             onDismiss = { showCognitionSheet = false },
-            onSave = { isDreaming, isMood, isAutoBrief, maxTokens ->
+            onSave = { isDreamingEnabled, isMood, isAutoBrief, maxTokens, isSemanticRecall, isRecentContext ->
                 viewModel.saveCognitionSettings(
-                    currentAgent.id, isDreaming, isMood, isAutoBrief, maxTokens
+                    currentAgent.id, isDreamingEnabled, isMood, isAutoBrief, maxTokens
                 )
+                viewModel.updateSemanticRecallEnabled(currentAgent.id, isSemanticRecall)
+                viewModel.updateRecentContextEnabled(currentAgent.id, isRecentContext)
                 showCognitionSheet = false
             },
             onResetVibe = { viewModel.resetMood(currentAgent.id) },
@@ -594,16 +596,20 @@ private fun AgentIdentityCard(
             val nameFocusRequester = remember { FocusRequester() }
 
             if (editingName) {
+                var nameHadFocus by remember { mutableStateOf(false) }
                 androidx.compose.foundation.text.BasicTextField(
                     value = nameText,
                     onValueChange = { nameText = it },
                     modifier = Modifier
                         .fillMaxWidth()
                         .focusRequester(nameFocusRequester)
-                        .onFocusChanged { if (!it.isFocused && editingName) {
-                            onNameChange(nameText)
-                            editingName = false
-                        }},
+                        .onFocusChanged {
+                            if (it.isFocused) { nameHadFocus = true }
+                            else if (nameHadFocus && editingName) {
+                                onNameChange(nameText)
+                                editingName = false
+                            }
+                        },
                     textStyle = MaterialTheme.typography.headlineSmall.copy(
                         color = MaterialTheme.colorScheme.onSurface,
                         fontWeight = FontWeight.Bold
@@ -645,16 +651,20 @@ private fun AgentIdentityCard(
             val roleFocusRequester = remember { FocusRequester() }
 
             if (editingRole) {
+                var roleHadFocus by remember { mutableStateOf(false) }
                 androidx.compose.foundation.text.BasicTextField(
                     value = roleText,
                     onValueChange = { roleText = it },
                     modifier = Modifier
                         .fillMaxWidth()
                         .focusRequester(roleFocusRequester)
-                        .onFocusChanged { if (!it.isFocused && editingRole) {
-                            onRoleChange(roleText)
-                            editingRole = false
-                        }},
+                        .onFocusChanged {
+                            if (it.isFocused) { roleHadFocus = true }
+                            else if (roleHadFocus && editingRole) {
+                                onRoleChange(roleText)
+                                editingRole = false
+                            }
+                        },
                     textStyle = MaterialTheme.typography.bodyMedium.copy(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     ),
@@ -1874,13 +1884,15 @@ private fun CognitionSettingsSheet(
     agent: AgentEntity,
     isDreaming: Boolean,
     onDismiss: () -> Unit,
-    onSave: (isDreamingEnabled: Boolean, isMoodTrackingEnabled: Boolean, isAutoBriefEnabled: Boolean, maxContextTokens: Int) -> Unit,
+    onSave: (isDreamingEnabled: Boolean, isMoodTrackingEnabled: Boolean, isAutoBriefEnabled: Boolean, maxContextTokens: Int, isSemanticRecallEnabled: Boolean, isRecentContextEnabled: Boolean) -> Unit,
     onResetVibe: () -> Unit,
     onDreamNow: () -> Unit
 ) {
     var dreamingEnabled by remember { mutableStateOf(agent.isDreamingEnabled) }
     var moodEnabled by remember { mutableStateOf(agent.isMoodTrackingEnabled) }
     var autoBriefEnabled by remember { mutableStateOf(agent.isAutoBriefEnabled) }
+    var semanticRecallEnabled by remember { mutableStateOf(agent.isSemanticRecallEnabled) }
+    var recentContextEnabled by remember { mutableStateOf(agent.isRecentContextEnabled) }
     // Slider: 256 to 8192 in steps of 256 → store as float, display as Int
     var tokenBudget by remember {
         mutableFloatStateOf(
@@ -1967,6 +1979,44 @@ private fun CognitionSettingsSheet(
                 Switch(checked = autoBriefEnabled, onCheckedChange = { autoBriefEnabled = it })
             }
 
+            Spacer(Modifier.height(12.dp))
+
+            // Semantic recall toggle
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Semantic Recall", style = MaterialTheme.typography.bodyMedium)
+                    Text(
+                        "Search past conversations for relevant context before each reply",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Switch(checked = semanticRecallEnabled, onCheckedChange = { semanticRecallEnabled = it })
+            }
+
+            Spacer(Modifier.height(12.dp))
+
+            // Recent context toggle
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Recent Context", style = MaterialTheme.typography.bodyMedium)
+                    Text(
+                        "Include summaries of conversations from the last 48 hours",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Switch(checked = recentContextEnabled, onCheckedChange = { recentContextEnabled = it })
+            }
+
             Spacer(Modifier.height(16.dp))
             HorizontalDivider()
             Spacer(Modifier.height(16.dp))
@@ -2025,7 +2075,7 @@ private fun CognitionSettingsSheet(
 
             // Save
             Button(
-                onClick = { onSave(dreamingEnabled, moodEnabled, autoBriefEnabled, tokenBudgetInt) },
+                onClick = { onSave(dreamingEnabled, moodEnabled, autoBriefEnabled, tokenBudgetInt, semanticRecallEnabled, recentContextEnabled) },
                 modifier = Modifier.fillMaxWidth()
             ) { Text("Save Settings") }
         }

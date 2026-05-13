@@ -1,18 +1,38 @@
 package com.ongrid.app.navigation
 
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.ChatBubbleOutline
+import androidx.compose.material.icons.outlined.GridView
+import androidx.compose.material.icons.outlined.SmartToy
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
@@ -20,23 +40,30 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.ongrid.app.OnGridApplication
-import com.ongrid.app.ui.screens.ChatScreen
-import com.ongrid.app.ui.screens.ConversationListScreen
+import com.ongrid.app.data.repository.SettingsRepository
+import com.ongrid.app.ui.screens.AgentDetailScreen
+import com.ongrid.app.ui.screens.AgentListScreen
+import com.ongrid.app.ui.screens.AgentScreen
 import com.ongrid.app.ui.screens.AgentScreen
 import com.ongrid.app.ui.screens.AllAgentsScreen
+import com.ongrid.app.ui.screens.ChatScreen
+import com.ongrid.app.ui.screens.ConversationListScreen
 import com.ongrid.app.ui.screens.DiscoveryScreen
 import com.ongrid.app.ui.screens.McpServerScreen
 import com.ongrid.app.ui.screens.ProjectDetailScreen
+import com.ongrid.app.ui.screens.ProjectListScreen
 import com.ongrid.app.ui.screens.SettingsScreen
 import com.ongrid.app.ui.screens.ShareTargetScreen
-import com.ongrid.app.viewmodel.ChatViewModel
 import com.ongrid.app.viewmodel.AgentViewModel
+import com.ongrid.app.viewmodel.ChatViewModel
 import com.ongrid.app.viewmodel.ConversationListViewModel
 import com.ongrid.app.viewmodel.DiscoveryViewModel
 import com.ongrid.app.viewmodel.McpViewModel
 import com.ongrid.app.viewmodel.ServerSetupState
+import kotlinx.coroutines.launch
 
 object Routes {
+    const val MAIN = "main"
     const val CONVERSATIONS = "conversations"
     const val DISCOVERY = "discovery?autoScan={autoScan}"
     const val CHAT_NEW = "chat/new/{serverHost}/{serverPort}/{modelName}"
@@ -144,12 +171,57 @@ fun AppNavigation() {
         }
     }
 
-    NavHost(navController = navController, startDestination = Routes.CONVERSATIONS) {
+    NavHost(navController = navController, startDestination = Routes.MAIN) {
 
-        composable(Routes.CONVERSATIONS) {
+        composable(Routes.MAIN) {
             val serverSetupState by conversationListViewModel.serverSetupState.collectAsState()
 
             // On first launch (no saved servers) redirect to Discovery and auto-scan.
+            LaunchedEffect(serverSetupState) {
+                if (serverSetupState is ServerSetupState.NoServers) {
+                    navController.navigate(Routes.discoveryRoute(autoScan = true)) {
+                        popUpTo(Routes.MAIN) { inclusive = false }
+                    }
+                }
+            }
+
+            when (serverSetupState) {
+                ServerSetupState.Loading, ServerSetupState.NoServers -> {
+                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        CircularProgressIndicator()
+                    }
+                }
+                is ServerSetupState.Ready -> {
+                    MainShell(
+                        conversationListViewModel = conversationListViewModel,
+                        agentViewModel = agentViewModel,
+                        settingsRepository = app.settingsRepository,
+                        onOpenConversation = { conversationId ->
+                            chatViewModel.resumeConversation(conversationId)
+                            navController.navigate(Routes.chatExistingRoute(conversationId))
+                        },
+                        onNewChat = { server, modelName ->
+                            chatViewModel.initNewConversation(server, modelName)
+                            chatViewModel.loadTools()
+                            navController.navigate(
+                                Routes.chatNewRoute(server.host, server.port, modelName)
+                            )
+                        },
+                        onOpenSettings = { navController.navigate(Routes.SETTINGS) },
+                        onOpenProject = { projectId ->
+                            navController.navigate(Routes.projectDetailRoute(projectId))
+                        },
+                        onOpenAgent = { agentId ->
+                            navController.navigate(Routes.agentDetailRoute(agentId))
+                        }
+                    )
+                }
+            }
+        }
+
+        // Legacy route kept for back-stack pop compatibility
+        composable(Routes.CONVERSATIONS) {
+            val serverSetupState by conversationListViewModel.serverSetupState.collectAsState()
             LaunchedEffect(serverSetupState) {
                 if (serverSetupState is ServerSetupState.NoServers) {
                     navController.navigate(Routes.discoveryRoute(autoScan = true)) {
@@ -157,7 +229,6 @@ fun AppNavigation() {
                     }
                 }
             }
-
             when (serverSetupState) {
                 ServerSetupState.Loading, ServerSetupState.NoServers -> {
                     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -178,22 +249,7 @@ fun AppNavigation() {
                                 Routes.chatNewRoute(server.host, server.port, modelName)
                             )
                         },
-                        onManageServers = {
-                            navController.navigate(Routes.discoveryRoute(autoScan = false))
-                        },
-                        onOpenSettings = {
-                            navController.navigate(Routes.SETTINGS)
-                        },
-                        onOpenProject = { projectId ->
-                            navController.navigate(Routes.projectDetailRoute(projectId))
-                        },
-                        agentViewModel = agentViewModel,
-                        onOpenAgent = { agentId ->
-                            navController.navigate(Routes.agentDetailRoute(agentId))
-                        },
-                        onShowAllAgents = {
-                            navController.navigate(Routes.ALL_AGENTS)
-                        }
+                        onOpenSettings = { navController.navigate(Routes.SETTINGS) }
                     )
                 }
             }
@@ -320,13 +376,102 @@ fun AppNavigation() {
                     navController.navigate(Routes.agentDetailRoute(agentId))
                 },
                 onCreateAgent = {
-                    // Navigate back to conversations where agent rail has the create sheet
                     navController.popBackStack()
                 }
             )
         }
     }
 }
+
+@Composable
+private fun MainShell(
+    conversationListViewModel: ConversationListViewModel,
+    agentViewModel: AgentViewModel,
+    settingsRepository: SettingsRepository,
+    onOpenConversation: (conversationId: String) -> Unit,
+    onNewChat: (server: com.ongrid.app.data.model.OllamaServer, modelName: String) -> Unit,
+    onOpenSettings: () -> Unit,
+    onOpenProject: (projectId: String) -> Unit,
+    onOpenAgent: (agentId: String) -> Unit
+) {
+    val storedTab by settingsRepository.lastActiveTab.collectAsState(initial = "chat")
+    var selectedTab by rememberSaveable { mutableStateOf(storedTab) }
+    val coroutineScope = rememberCoroutineScope()
+
+    Scaffold(
+        bottomBar = {
+            Column {
+                HorizontalDivider(thickness = 0.5.dp)
+                NavigationBar(tonalElevation = 0.dp) {
+                    NavigationBarItem(
+                        selected = selectedTab == "chat",
+                        onClick = {
+                            selectedTab = "chat"
+                            coroutineScope.launch { settingsRepository.saveLastActiveTab("chat") }
+                        },
+                        icon = {
+                            Icon(Icons.Outlined.ChatBubbleOutline, contentDescription = "Chat")
+                        },
+                        label = { Text("Chat") }
+                    )
+                    NavigationBarItem(
+                        selected = selectedTab == "projects",
+                        onClick = {
+                            selectedTab = "projects"
+                            coroutineScope.launch { settingsRepository.saveLastActiveTab("projects") }
+                        },
+                        icon = {
+                            Icon(Icons.Outlined.GridView, contentDescription = "Projects")
+                        },
+                        label = { Text("Projects") }
+                    )
+                    NavigationBarItem(
+                        selected = selectedTab == "agents",
+                        onClick = {
+                            selectedTab = "agents"
+                            coroutineScope.launch { settingsRepository.saveLastActiveTab("agents") }
+                        },
+                        icon = {
+                            Icon(Icons.Outlined.SmartToy, contentDescription = "Agents")
+                        },
+                        label = { Text("Agents") }
+                    )
+                }
+            }
+        }
+    ) { innerPadding ->
+        AnimatedContent(
+            targetState = selectedTab,
+            transitionSpec = { fadeIn(tween(180)) togetherWith fadeOut(tween(180)) },
+            modifier = Modifier.padding(innerPadding)
+        ) { tab ->
+            when (tab) {
+                "chat" -> ConversationListScreen(
+                    viewModel = conversationListViewModel,
+                    onOpenConversation = onOpenConversation,
+                    onNewChat = onNewChat,
+                    onOpenSettings = onOpenSettings
+                )
+                "projects" -> ProjectListScreen(
+                    viewModel = conversationListViewModel,
+                    navigateToProject = onOpenProject
+                )
+                "agents" -> AgentListScreen(
+                    viewModel = agentViewModel,
+                    navigateToAgent = onOpenAgent,
+                    onCreateAgent = {}
+                )
+                else -> ConversationListScreen(
+                    viewModel = conversationListViewModel,
+                    onOpenConversation = onOpenConversation,
+                    onNewChat = onNewChat,
+                    onOpenSettings = onOpenSettings
+                )
+            }
+        }
+    }
+}
+
 
 private fun buildDirectSharePrefill(content: com.ongrid.app.PendingSharedContent): String {
     val text = content.text

@@ -71,4 +71,10 @@ interface AgentDao {
 
     @Query("UPDATE agents SET lastDreamedAt = :timestamp WHERE id = :id")
     suspend fun updateLastDreamedAt(id: String, timestamp: Long)
+
+    @Query("UPDATE agents SET isSemanticRecallEnabled = :enabled WHERE id = :id")
+    suspend fun updateSemanticRecallEnabled(id: String, enabled: Boolean)
+
+    @Query("UPDATE agents SET isRecentContextEnabled = :enabled WHERE id = :id")
+    suspend fun updateRecentContextEnabled(id: String, enabled: Boolean)
 }

@@ -53,13 +53,16 @@ class ConversationListViewModel(application: Application) : AndroidViewModel(app
     private val allConversations: StateFlow<List<ConversationEntity>> = repo.allConversations
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
+    private val standaloneConversations: StateFlow<List<ConversationEntity>> = repo.standaloneConversations
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
     private val _selectedProjectId = MutableStateFlow<String?>(null)
     val selectedProjectId: StateFlow<String?> = _selectedProjectId.asStateFlow()
 
-    /** Conversations filtered by the currently selected project (null = show all). */
+    /** Conversations filtered by the currently selected project (null = standalone only). */
     val displayedConversations: StateFlow<List<ConversationEntity>> =
-        combine(_selectedProjectId, allConversations) { projectId, convs ->
-            if (projectId == null) convs else convs.filter { it.projectId == projectId }
+        combine(_selectedProjectId, allConversations, standaloneConversations) { projectId, all, standalone ->
+            if (projectId == null) standalone else all.filter { it.projectId == projectId }
         }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     fun selectProject(projectId: String?) {

@@ -489,6 +489,10 @@ fun ChatScreen(
                             } else if (uiState.showSkillPicker) {
                                 viewModel.dismissSkillPicker()
                             }
+                            // Pre-fetch semantic recall while the user is typing
+                            if (newValue.length > 10) {
+                                viewModel.prepareSemanticRecall(newValue)
+                            }
                         },
                         placeholder = { Text("Message… (type / for skills)") },
                         modifier = Modifier.weight(1f),

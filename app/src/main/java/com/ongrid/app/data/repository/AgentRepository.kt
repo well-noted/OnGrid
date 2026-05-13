@@ -78,6 +78,7 @@ class AgentRepository(
     suspend fun updateMood(agentId: String, mood: String) { agentDao.updateMood(agentId, mood) }
     suspend fun resetMood(agentId: String) { agentDao.updateMood(agentId, "Neutral") }
     suspend fun updateLastDreamedAt(agentId: String, timestamp: Long) { agentDao.updateLastDreamedAt(agentId, timestamp) }
+    suspend fun updateSemanticRecallEnabled(agentId: String, enabled: Boolean) { agentDao.updateSemanticRecallEnabled(agentId, enabled) }
 
     // Phase 2: Dream Logs
 
@@ -95,4 +96,8 @@ class AgentRepository(
     fun parseDisabledTools(json: String): List<String> = try {
         gson.fromJson(json, object : TypeToken<List<String>>() {}.type) ?: emptyList()
     } catch (e: Exception) { emptyList() }
+
+    suspend fun updateRecentContextEnabled(agentId: String, enabled: Boolean) {
+        agentDao.updateRecentContextEnabled(agentId, enabled)
+    }
 }

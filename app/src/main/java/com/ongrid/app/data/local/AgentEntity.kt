@@ -28,5 +28,9 @@ data class AgentEntity(
     val isAutoBriefEnabled: Boolean = true,
     val maxContextTokens: Int = 4096,
     val currentMood: String = "Neutral",
-    val lastDreamedAt: Long = 0L
+    val lastDreamedAt: Long = 0L,
+    // Phase 3 — Semantic memory recall
+    val isSemanticRecallEnabled: Boolean = false,
+    // Phase 4 — Recent conversation context
+    val isRecentContextEnabled: Boolean = false
 )

@@ -6,8 +6,8 @@ import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
 @Database(
-    entities = [ProjectEntity::class, ConversationEntity::class, MessageEntity::class, SavedServerEntity::class, SkillEntity::class, ProjectMemoryEntity::class, AgentEntity::class, AgentMemoryEntity::class, DreamLogEntity::class, DreamScheduleEntity::class],
-    version = 9,
+    entities = [ProjectEntity::class, ConversationEntity::class, MessageEntity::class, SavedServerEntity::class, SkillEntity::class, ProjectMemoryEntity::class, AgentEntity::class, AgentMemoryEntity::class, DreamLogEntity::class, DreamScheduleEntity::class, ConversationEmbeddingEntity::class],
+    version = 11,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -21,6 +21,33 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun agentMemoryDao(): AgentMemoryDao
     abstract fun dreamLogDao(): DreamLogDao
     abstract fun dreamScheduleDao(): DreamScheduleDao
+    abstract fun conversationEmbeddingDao(): ConversationEmbeddingDao
+}
+
+val MIGRATION_10_11 = object : Migration(10, 11) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE agents ADD COLUMN isRecentContextEnabled INTEGER NOT NULL DEFAULT 0")
+    }
+}
+
+val MIGRATION_9_10 = object : Migration(9, 10) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS conversation_embeddings (
+                id TEXT PRIMARY KEY NOT NULL,
+                agentId TEXT NOT NULL,
+                conversationId TEXT NOT NULL,
+                chunkText TEXT NOT NULL,
+                embeddingJson TEXT NOT NULL,
+                createdAt INTEGER NOT NULL
+            )
+            """.trimIndent()
+        )
+        db.execSQL("CREATE INDEX IF NOT EXISTS index_conversation_embeddings_agentId ON conversation_embeddings(agentId)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS index_conversation_embeddings_conversationId ON conversation_embeddings(conversationId)")
+        db.execSQL("ALTER TABLE agents ADD COLUMN isSemanticRecallEnabled INTEGER NOT NULL DEFAULT 0")
+    }
 }
 
 val MIGRATION_8_9 = object : Migration(8, 9) {
