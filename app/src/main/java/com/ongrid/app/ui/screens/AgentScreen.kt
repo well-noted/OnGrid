@@ -215,7 +215,23 @@ fun AgentScreen(
                         showStatusMenu = false
                     },
                     onDismissStatusMenu = { showStatusMenu = false },
-                    onTalkClick = { showModelPickerForTalk = true },
+                    onTalkClick = {
+                        val host = currentAgent.utilityModelHost
+                        val model = currentAgent.utilityModelName
+                        if (host.isNotBlank() && model.isNotBlank()) {
+                            // Agent has a model configured — skip the picker entirely
+                            val uri = java.net.URI(host)
+                            val serverHost = uri.host ?: host
+                            val serverPort = if (uri.port > 0) uri.port else 11434
+                            onTalkToAgent(
+                                currentAgent.id,
+                                com.ongrid.app.data.model.OllamaServer(host = serverHost, port = serverPort),
+                                model
+                            )
+                        } else {
+                            showModelPickerForTalk = true
+                        }
+                    },
                     onCognitionSettings = { showCognitionSheet = true }
                 )
             }
@@ -726,6 +742,14 @@ private fun AgentIdentityCard(
                 Icon(Icons.Default.SmartToy, contentDescription = null, modifier = Modifier.size(18.dp))
                 Spacer(Modifier.width(8.dp))
                 Text("Talk to ${agent.name}")
+            }
+            if (agent.utilityModelName.isNotBlank()) {
+                Text(
+                    text = agent.utilityModelName,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                    modifier = Modifier.align(Alignment.CenterHorizontally).padding(top = 4.dp)
+                )
             }
         }
     }
