@@ -25,7 +25,6 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
@@ -499,14 +498,8 @@ fun ChatScreen(
                         maxLines = 5,
                         keyboardOptions = KeyboardOptions(
                             capitalization = KeyboardCapitalization.Sentences,
-                            imeAction = ImeAction.Send
+                            imeAction = ImeAction.Default
                         ),
-                        keyboardActions = KeyboardActions(onSend = {
-                            if (inputText.isNotBlank() && !uiState.isLoading) {
-                                viewModel.sendMessage(inputText.trim())
-                                inputText = ""
-                            }
-                        }),
                         shape = RoundedCornerShape(24.dp)
                     )
                     // Skill picker button
