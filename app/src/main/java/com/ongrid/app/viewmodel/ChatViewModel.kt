@@ -21,6 +21,9 @@ import com.ongrid.app.data.local.AgentEntity
 import com.ongrid.app.data.local.AgentMemoryEntity
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
+import java.time.LocalDateTime
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -1004,6 +1007,11 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         val injected = mutableListOf<OllamaChatMessage>()
 
         if (agent != null) {
+            // 0. Date/time awareness — always injected so the agent knows when "now" is
+            val now = LocalDateTime.now(ZoneId.systemDefault())
+            val dateTimeStr = now.format(DateTimeFormatter.ofPattern("EEEE, MMMM d, yyyy 'at' h:mm a"))
+            injected += OllamaChatMessage(role = "system", content = "Current date and time: $dateTimeStr")
+
             // Mood injection — prepend before the system prompt when mood tracking is on
             if (agent.isMoodTrackingEnabled && agent.currentMood.isNotBlank()) {
                 val toneInstruction = moodToneInstruction(agent.currentMood)
