@@ -15,12 +15,11 @@ private const val TAG = "DreamWorker"
  * WorkManager worker that runs background "dreaming" for each opted-in agent.
  *
  * Per-agent tasks (when [AgentEntity.isDreamingEnabled] = true):
- * 1. Estimate token usage for system prompt + brief + memories.
- * 2. If memory tokens exceed 30 % of [AgentEntity.maxContextTokens], triage memories
- *    (merge/prune via the utility agent).
- * 3. Review the OPEN section of the brief for tasks stagnant > 3 days.
- * 4. If [AgentEntity.isMoodTrackingEnabled], calculate mood from recent conversation turns.
- * 5. Persist all changes and write a [DreamLogEntity].
+ * 1. Deduplicate and triage memories — always scans for redundant/overlapping entries,
+ *    merges them into synthesised facts, and deletes stale ones. Flags over-budget usage.
+ * 2. Review the OPEN section of the brief for tasks stagnant > 3 days.
+ * 3. If [AgentEntity.isMoodTrackingEnabled], calculate mood from recent conversation turns.
+ * 4. Persist all changes and write a [DreamLogEntity].
  *
  * While running, a persistent "☁️ Dreaming…" notification is shown and live log lines
  * are emitted to [OnGridApplication.dreamLogChannel] so that the UI can surface a
@@ -110,51 +109,59 @@ class DreamWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
         var tokensSaved = 0
         var moodChange: String? = null
 
-        // ── 1. Token triage ───────────────────────────────────────────────────
+        // ── 1. Memory deduplication & token triage ───────────────────────────
         val promptTokens = agent.systemPrompt.length / 4
         val briefTokens = agent.brief.length / 4
         val memoryTokens = memories.sumOf { it.content.length } / 4
         val totalMemoryBudget = (agent.maxContextTokens * 0.3).toInt()
+        val overBudget = memoryTokens > totalMemoryBudget
 
         changeLog["tokens_before"] = promptTokens + briefTokens + memoryTokens
-        emitLog("  [1/3] Token audit: ${promptTokens + briefTokens + memoryTokens} tokens (budget ${agent.maxContextTokens})")
+        emitLog("  [1/4] Memory dedup & triage: ${promptTokens + briefTokens + memoryTokens} tokens (budget ${agent.maxContextTokens})${if (overBudget) " ⚠ over budget" else ""}")
 
-        if (memoryTokens > totalMemoryBudget) {
-            emitLog("  ↳ Memory over budget (${memoryTokens}/${totalMemoryBudget}) — triaging")
-            val unpinnedContents = memories.filter { !it.isPinned }.map { it.content }
-            if (unpinnedContents.isNotEmpty()) {
-                val triage = app.utilityAgentRepository.triageMemories(utilHost, utilModel, unpinnedContents)
-                val unpinned = memories.filter { !it.isPinned }
+        val unpinned = memories.filter { !it.isPinned }
+        if (unpinned.isNotEmpty()) {
+            val unpinnedContents = unpinned.map { it.content }
+            emitLog("  ↳ Scanning ${unpinned.size} unpinned memories for redundancy…")
+            val triage = app.utilityAgentRepository.triageMemories(utilHost, utilModel, unpinnedContents)
 
-                // Delete flagged memories
-                val toDelete = triage.delete.mapNotNull { unpinned.getOrNull(it) }
-                toDelete.forEach { app.agentRepository.deleteMemory(it.id) }
+            // Delete flagged memories
+            val toDelete = triage.delete.mapNotNull { unpinned.getOrNull(it) }
+            toDelete.forEach { app.agentRepository.deleteMemory(it.id) }
 
-                // Replace merged memories with synthesised fact
-                if (triage.synthesised != null && triage.merge.isNotEmpty()) {
-                    val toMerge = triage.merge.mapNotNull { unpinned.getOrNull(it) }
-                    toMerge.forEach { app.agentRepository.deleteMemory(it.id) }
-                    app.agentRepository.insertMemory(
-                        com.ongrid.app.data.local.AgentMemoryEntity(
-                            agentId = agentId,
-                            content = triage.synthesised
-                        )
+            // Replace merged memories with synthesised fact
+            if (triage.synthesised != null && triage.merge.isNotEmpty()) {
+                val toMerge = triage.merge.mapNotNull { unpinned.getOrNull(it) }
+                toMerge.forEach { app.agentRepository.deleteMemory(it.id) }
+                app.agentRepository.insertMemory(
+                    com.ongrid.app.data.local.AgentMemoryEntity(
+                        agentId = agentId,
+                        content = triage.synthesised
                     )
-                }
-
-                val removed = toDelete.size + (if (triage.synthesised != null) triage.merge.size - 1 else 0).coerceAtLeast(0)
-                tokensSaved = removed * (unpinnedContents.firstOrNull()?.length?.div(4) ?: 20)
-                changeLog["memories_merged"] = triage.merge.size
-                changeLog["memories_deleted"] = toDelete.size
-                if (triage.synthesised != null) changeLog["synthesised_fact"] = triage.synthesised
-                emitLog("  ↳ Merged ${triage.merge.size}, deleted ${toDelete.size} memories. Saved ~$tokensSaved tokens")
+                )
             }
+
+            val removed = toDelete.size + (if (triage.synthesised != null) triage.merge.size - 1 else 0).coerceAtLeast(0)
+            tokensSaved = removed * (unpinnedContents.firstOrNull()?.length?.div(4) ?: 20)
+            changeLog["memories_merged"] = triage.merge.size
+            changeLog["memories_deleted"] = toDelete.size
+            if (triage.synthesised != null) changeLog["synthesised_fact"] = triage.synthesised
+
+            val actions = buildString {
+                if (triage.merge.size > 0) append("merged ${triage.merge.size}")
+                if (triage.delete.isNotEmpty()) {
+                    if (isNotEmpty()) append(", ")
+                    append("deleted ${triage.delete.size}")
+                }
+                if (isEmpty()) append("no changes")
+            }
+            emitLog("  ↳ Dedup complete: $actions. Saved ~$tokensSaved tokens")
         } else {
-            emitLog("  ↳ Token budget OK — no triage needed")
+            emitLog("  ↳ No unpinned memories to triage")
         }
 
         // ── 2. Brief stale-task review ────────────────────────────────────────
-        emitLog("  [2/3] Brief review")
+        emitLog("  [2/4] Brief review")
         if (agent.brief.isNotBlank() && agent.isAutoBriefEnabled) {
             val conversations = app.conversationRepository.conversationsForAgent(agentId).first()
             val lastConvAt = conversations.maxOfOrNull { it.updatedAt } ?: agent.briefUpdatedAt
@@ -174,7 +181,7 @@ class DreamWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
         }
 
         // ── 3. Mood calculation ───────────────────────────────────────────────
-        emitLog("  [3/3] Mood calculation")
+        emitLog("  [3/4] Mood calculation")
         if (agent.isMoodTrackingEnabled) {
             val conversations = app.conversationRepository.conversationsForAgent(agentId).first()
             val recentConv = conversations.firstOrNull()
@@ -197,6 +204,7 @@ class DreamWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
         }
 
         // ── 4. Write dream log ────────────────────────────────────────────────
+        emitLog("  [4/4] Writing dream log")
         val summary = buildString {
             if (changeLog.containsKey("memories_merged") || changeLog.containsKey("memories_deleted")) {
                 append("Consolidated ${changeLog["memories_merged"] ?: 0} memories; ")

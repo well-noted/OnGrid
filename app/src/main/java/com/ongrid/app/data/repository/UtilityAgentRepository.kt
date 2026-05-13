@@ -350,10 +350,15 @@ ${recentExchange.take(2000)}"""
                 messages = listOf(
                     OllamaChatMessage(
                         role = "user",
-                        content = """You are a memory curator for an AI agent. Review the numbered memories below and respond with EXACTLY this JSON (no markdown fences, no extra text):
+                        content = """You are a memory curator for an AI agent. Your primary goals are:
+1. Find and merge memories that are redundant, overlapping, or semantically identical into a single synthesised fact.
+2. Delete memories that are outdated, trivial, or no longer useful.
+3. Keep everything else unchanged.
+
+Respond with EXACTLY this JSON (no markdown fences, no extra text):
 {
   "keep": [list of indices to keep unchanged],
-  "merge": [list of indices that should be merged into one synthesised fact],
+  "merge": [list of indices that overlap or are redundant and should be merged],
   "delete": [list of indices that are outdated or low-utility],
   "synthesised": "single merged fact combining the merged entries, or empty string if none"
 }
