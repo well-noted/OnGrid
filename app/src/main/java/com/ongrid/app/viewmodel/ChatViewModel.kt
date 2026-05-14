@@ -323,6 +323,10 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             .filter { it.function.name !in disabled }
             .takeIf { it.isNotEmpty() }
         val contextLength = _uiState.value.modelContextLength
+        // Always provide a num_ctx floor so Ollama never silently falls back to its 2048-token
+        // default. Without this, the second streaming turn (after tool results are appended to
+        // the history) can overflow the 2048-token window and the model returns empty content.
+        val safeContextLength = contextLength ?: 32768
         val request = OllamaChatRequest(
             model = currentModel,
             messages = history,
@@ -331,10 +335,9 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             // null think = model decides; true/false = explicit override
             think = if (_uiState.value.supportsThinking) _uiState.value.thinkingEnabled else null,
             options = if (_uiState.value.thinkingEnabled)
-                OllamaRequestOptions(thinkingBudget = _uiState.value.thinkingBudget, numCtx = contextLength)
-            else if (contextLength != null)
-                OllamaRequestOptions(numCtx = contextLength)
-            else null
+                OllamaRequestOptions(thinkingBudget = _uiState.value.thinkingBudget, numCtx = safeContextLength)
+            else
+                OllamaRequestOptions(numCtx = safeContextLength)
         )
 
         // Drain any leftover events from a previous (completed or cancelled) request.
