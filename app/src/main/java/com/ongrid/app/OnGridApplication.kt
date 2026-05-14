@@ -23,7 +23,9 @@ import com.ongrid.app.data.local.MIGRATION_7_8
 import com.ongrid.app.data.local.MIGRATION_8_9
 import com.ongrid.app.data.local.MIGRATION_10_11
 import com.ongrid.app.data.local.MIGRATION_11_12
+import com.ongrid.app.data.local.MIGRATION_12_13
 import com.ongrid.app.data.local.MIGRATION_9_10
+import com.ongrid.app.data.repository.AgentConversationRepository
 import com.ongrid.app.data.repository.AgentRepository
 import com.ongrid.app.data.repository.ConversationRepository
 import com.ongrid.app.data.repository.EmbeddingRepository
@@ -62,7 +64,11 @@ data class PendingChatRequest(
      * Skills available for the agent to activate via `use_skill`.  Keyed by skill name;
      * value is (skillId, skillContent).  Empty outside agent mode.
      */
-    val availableSkillMap: Map<String, Pair<String, String>> = emptyMap()
+    val availableSkillMap: Map<String, Pair<String, String>> = emptyMap(),
+    /** Non-null when the user @mentioned another agent in this message. */
+    val mentionedAgentId: String? = null,
+    /** Display name matching [mentionedAgentId]. */
+    val mentionedAgentName: String? = null
 )
 
 /**
@@ -147,10 +153,11 @@ class OnGridApplication : Application() {
     val webFetchRepository by lazy { WebFetchRepository(httpClient) }
     val formMemoryRepository: FormMemoryRepository by lazy { FormMemoryRepository(database.agentMemoryDao()) }
     val skillActivationRepository: SkillActivationRepository by lazy { SkillActivationRepository() }
+    val agentConversationRepository: AgentConversationRepository by lazy { AgentConversationRepository() }
 
     val database: AppDatabase by lazy {
         Room.databaseBuilder(this, AppDatabase::class.java, "ongrid.db")
-            .addMigrations(MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12)
+            .addMigrations(MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13)
             .fallbackToDestructiveMigration()
             .build()
     }

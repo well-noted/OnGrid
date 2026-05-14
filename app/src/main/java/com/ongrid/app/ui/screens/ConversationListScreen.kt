@@ -30,6 +30,7 @@ import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.MenuBook
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.SmartToy
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Settings
@@ -180,46 +181,104 @@ fun ConversationListScreen(
                         }
                     }
                 } else {
+                    val activeAgentsForList by viewModel.activeAgents.collectAsState()
                     LazyColumn(
                         modifier = Modifier
                             .fillMaxSize()
                             .padding(innerPadding)
                     ) {
                         items(conversations, key = { it.id }) { conversation ->
-                            val dotColor = MaterialTheme.colorScheme.outline
-                            ListItem(
-                                headlineContent = {
-                                    Text(
-                                        conversation.title,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                },
-                                supportingContent = {
-                                    Text(
-                                        conversation.modelName,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                },
-                                leadingContent = {
-                                    Box(
-                                        modifier = Modifier
-                                            .size(10.dp)
-                                            .clip(CircleShape)
-                                            .background(dotColor)
-                                    )
-                                },
-                                trailingContent = {
-                                    Text(
-                                        formatRelativeTime(conversation.updatedAt),
-                                        fontSize = 12.sp,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                },
-                                modifier = Modifier.clickable { onOpenConversation(conversation.id) }
-                            )
+                            val isHandoff = conversation.conversationType == "AGENT_HANDOFF"
+                            if (isHandoff) {
+                                // Parse participant agent IDs and look up names
+                                val participantIds = try {
+                                    Gson().fromJson<List<String>>(conversation.participantAgentIds, object : com.google.gson.reflect.TypeToken<List<String>>() {}.type)
+                                } catch (e: Exception) { emptyList() }
+                                val agents = activeAgentsForList
+                                val agent1 = agents.firstOrNull { it.id == participantIds.getOrNull(0) }
+                                val agent2 = agents.firstOrNull { it.id == participantIds.getOrNull(1) }
+                                val color1 = if ((agent1?.color ?: 0) != 0) androidx.compose.ui.graphics.Color(agent1!!.color) else MaterialTheme.colorScheme.primary
+                                val color2 = if ((agent2?.color ?: 0) != 0) androidx.compose.ui.graphics.Color(agent2!!.color) else MaterialTheme.colorScheme.secondary
+                                ListItem(
+                                    headlineContent = {
+                                        Text(
+                                            conversation.title,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    },
+                                    supportingContent = {
+                                        Text(
+                                            conversation.goal.take(60).ifBlank { conversation.modelName },
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    },
+                                    leadingContent = {
+                                        // Overlapping agent color dots
+                                        Box(modifier = Modifier.size(24.dp)) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(12.dp)
+                                                    .clip(CircleShape)
+                                                    .background(color1)
+                                                    .align(Alignment.TopStart)
+                                            )
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(12.dp)
+                                                    .clip(CircleShape)
+                                                    .background(color2)
+                                                    .align(Alignment.BottomEnd)
+                                            )
+                                        }
+                                    },
+                                    trailingContent = {
+                                        Text(
+                                            formatRelativeTime(conversation.updatedAt),
+                                            fontSize = 12.sp,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    },
+                                    modifier = Modifier.clickable { onOpenConversation(conversation.id) }
+                                )
+                            } else {
+                                val dotColor = MaterialTheme.colorScheme.outline
+                                ListItem(
+                                    headlineContent = {
+                                        Text(
+                                            conversation.title,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    },
+                                    supportingContent = {
+                                        Text(
+                                            conversation.modelName,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    },
+                                    leadingContent = {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(10.dp)
+                                                .clip(CircleShape)
+                                                .background(dotColor)
+                                        )
+                                    },
+                                    trailingContent = {
+                                        Text(
+                                            formatRelativeTime(conversation.updatedAt),
+                                            fontSize = 12.sp,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    },
+                                    modifier = Modifier.clickable { onOpenConversation(conversation.id) }
+                                )
+                            }
                             HorizontalDivider(thickness = 0.5.dp)
                         }
                     }

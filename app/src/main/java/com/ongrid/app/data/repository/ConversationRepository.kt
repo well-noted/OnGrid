@@ -6,13 +6,17 @@ import com.ongrid.app.data.local.MessageEntity
 import com.ongrid.app.data.local.ProjectEntity
 import com.ongrid.app.data.model.ChatMessage
 import com.ongrid.app.data.model.MessageRole
+import com.google.gson.Gson
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.map
 
 class ConversationRepository(private val db: AppDatabase) {
 
     val allProjects: Flow<List<ProjectEntity>> = db.projectDao().getAllProjects()
     val allConversations: Flow<List<ConversationEntity>> = db.conversationDao().getAllConversations()
     val standaloneConversations: Flow<List<ConversationEntity>> = db.conversationDao().standaloneConversations()
+    val agentHandoffConversations: Flow<List<ConversationEntity>> = db.conversationDao().getAgentHandoffConversations()
+    val standaloneAndHandoffConversations: Flow<List<ConversationEntity>> = db.conversationDao().standaloneAndHandoffConversations()
 
     // ── Projects ──────────────────────────────────────────────────────────────
 
@@ -57,6 +61,29 @@ class ConversationRepository(private val db: AppDatabase) {
         return conv
     }
 
+    suspend fun createAgentHandoffConversation(
+        serverHost: String,
+        serverPort: Int,
+        modelName: String,
+        agent1Id: String,
+        agent2Id: String,
+        title: String,
+        goal: String
+    ): ConversationEntity {
+        val gson = Gson()
+        val conv = ConversationEntity(
+            serverHost = serverHost,
+            serverPort = serverPort,
+            modelName = modelName,
+            title = title,
+            conversationType = "AGENT_HANDOFF",
+            participantAgentIds = gson.toJson(listOf(agent1Id, agent2Id)),
+            goal = goal
+        )
+        db.conversationDao().insert(conv)
+        return conv
+    }
+
     suspend fun updateThinkingEnabled(id: String, thinkingEnabled: Boolean) {
         db.conversationDao().updateThinkingEnabled(id, thinkingEnabled)
     }
@@ -89,6 +116,11 @@ class ConversationRepository(private val db: AppDatabase) {
     suspend fun getMessages(conversationId: String): List<ChatMessage> =
         db.messageDao().getByConversation(conversationId).map { it.toChatMessage() }
 
+    /** Live-updating Flow for AGENT_HANDOFF conversations where the worker writes new messages. */
+    fun observeMessages(conversationId: String): Flow<List<ChatMessage>> =
+        db.messageDao().observeByConversation(conversationId)
+            .map { entities -> entities.map { it.toChatMessage() } }
+
     suspend fun saveMessage(conversationId: String, message: ChatMessage) {
         db.messageDao().insert(
             MessageEntity(
@@ -97,7 +129,8 @@ class ConversationRepository(private val db: AppDatabase) {
                 role = message.role.name,
                 content = message.content,
                 thinkingContent = message.thinkingContent ?: "",
-                timestamp = message.timestamp
+                timestamp = message.timestamp,
+                senderAgentId = message.senderAgentId
             )
         )
     }
@@ -112,5 +145,6 @@ private fun MessageEntity.toChatMessage() = ChatMessage(
     role = MessageRole.valueOf(role),
     content = content,
     thinkingContent = thinkingContent.ifEmpty { null },
-    timestamp = timestamp
+    timestamp = timestamp,
+    senderAgentId = senderAgentId
 )

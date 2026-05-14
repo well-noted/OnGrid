@@ -16,7 +16,9 @@ data class ChatMessage(
     /** True when this message was injected by an active skill. */
     val isSkill: Boolean = false,
     /** The display name of the skill that generated this message. */
-    val skillName: String? = null
+    val skillName: String? = null,
+    /** For AGENT_HANDOFF conversations: which agent sent this message. */
+    val senderAgentId: String? = null
 )
 
 data class ToolCall(

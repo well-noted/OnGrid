@@ -16,6 +16,7 @@ import com.ongrid.app.data.model.MessageRole
 import com.ongrid.app.data.model.OllamaChatMessage
 import com.ongrid.app.data.model.OllamaChatRequest
 import com.ongrid.app.data.model.OllamaToolCall
+import com.ongrid.app.AgentConversationWorker
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -267,6 +268,57 @@ class ChatForegroundService : Service() {
                                 val r = app.mcpRepository.callTool(serverEntry.first, funcName, args)
                                 r.content.joinToString("\n") { it.text } to r.isError
                             }
+                            funcName == "initiate_agent_convo" -> {
+                                val targetName = args["target_agent_name"]?.toString()?.trim() ?: ""
+                                val message = args["message"]?.toString()?.trim() ?: ""
+                                val goal = args["goal"]?.toString()?.trim() ?: ""
+                                val initiatorId = pending.agentId
+                                if (initiatorId == null) {
+                                    "initiate_agent_convo is only available inside an agent workspace." to true
+                                } else if (targetName.isBlank() || message.isBlank()) {
+                                    "target_agent_name and message are required." to true
+                                } else {
+                                    val allAgents = app.agentRepository.activeAgents().first()
+                                    val targetAgent = allAgents.firstOrNull {
+                                        it.id != initiatorId &&
+                                        it.name.equals(targetName, ignoreCase = true)
+                                    }
+                                    if (targetAgent == null) {
+                                        val names = allAgents.filter { it.id != initiatorId }
+                                            .joinToString(", ") { it.name }
+                                        "Agent '$targetName' not found. Available: $names" to true
+                                    } else {
+                                        val initiatorAgent = app.agentRepository.getAgent(initiatorId)
+                                        val conversationTitle = "${initiatorAgent?.name ?: "Agent"} ↔ ${targetAgent.name}"
+                                        val handoffConv = app.conversationRepository.createAgentHandoffConversation(
+                                            serverHost = pending.baseUrl.removePrefix("http://").substringBefore(":"),
+                                            serverPort = pending.baseUrl.substringAfterLast(":").toIntOrNull() ?: 11434,
+                                            modelName = pending.request.model,
+                                            agent1Id = initiatorId,
+                                            agent2Id = targetAgent.id,
+                                            title = conversationTitle,
+                                            goal = goal.ifBlank { message.take(100) }
+                                        )
+                                        app.database.messageDao().insert(
+                                            com.ongrid.app.data.local.MessageEntity(
+                                                id = java.util.UUID.randomUUID().toString(),
+                                                conversationId = handoffConv.id,
+                                                role = "ASSISTANT",
+                                                content = message,
+                                                timestamp = System.currentTimeMillis(),
+                                                senderAgentId = initiatorId
+                                            )
+                                        )
+                                        AgentConversationWorker.enqueue(
+                                            applicationContext,
+                                            conversationId = handoffConv.id,
+                                            agent1Id = initiatorId,
+                                            agent2Id = targetAgent.id
+                                        )
+                                        "Conversation opened with ${targetAgent.name}. I've sent them: \"$message\"\nThe conversation is now running in the background. You can follow it in the conversation list." to false
+                                    }
+                                }
+                            }
                             else -> {
                                 val availableNames = buildList {
                                     add("web_search")
@@ -274,6 +326,7 @@ class ChatForegroundService : Service() {
                                     if (pending.agentId != null) {
                                         add("form_memory")
                                         add("use_skill")
+                                        add("initiate_agent_convo")
                                     }
                                     addAll(toolMap.keys)
                                 }

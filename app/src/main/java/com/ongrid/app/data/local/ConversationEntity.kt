@@ -29,5 +29,12 @@ data class ConversationEntity(
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis(),
     val thinkingEnabled: Boolean = false,
-    val tags: String = ""
+    val tags: String = "",
+    // Multi-agent coordination
+    /** "STANDARD" for regular conversations, "AGENT_HANDOFF" for agent-to-agent channels. */
+    val conversationType: String = "STANDARD",
+    /** JSON list of agent IDs participating in an AGENT_HANDOFF conversation. */
+    val participantAgentIds: String = "[]",
+    /** The goal or task the agents are collaborating to complete. */
+    val goal: String = ""
 )

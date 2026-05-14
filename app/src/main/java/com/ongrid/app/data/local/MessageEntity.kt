@@ -23,5 +23,7 @@ data class MessageEntity(
     val role: String,
     val content: String,
     val thinkingContent: String = "",
-    val timestamp: Long
+    val timestamp: Long,
+    /** For AGENT_HANDOFF conversations: which agent produced this message. Null for user/tool/system messages. */
+    val senderAgentId: String? = null
 )

@@ -4,6 +4,7 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.ongrid.app.OnGridApplication
+import com.ongrid.app.data.local.AgentEntity
 import com.ongrid.app.data.local.ConversationEntity
 import com.ongrid.app.data.local.ProjectEntity
 import com.ongrid.app.data.local.SavedServerEntity
@@ -56,12 +57,20 @@ class ConversationListViewModel(application: Application) : AndroidViewModel(app
     private val standaloneConversations: StateFlow<List<ConversationEntity>> = repo.standaloneConversations
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
+    /** All active agents — used by ConversationListScreen to display agent names on handoff convos. */
+    val activeAgents: StateFlow<List<AgentEntity>> = app.agentRepository.activeAgents()
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    private val standaloneAndHandoffConversations: StateFlow<List<ConversationEntity>> =
+        repo.standaloneAndHandoffConversations
+            .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
     private val _selectedProjectId = MutableStateFlow<String?>(null)
     val selectedProjectId: StateFlow<String?> = _selectedProjectId.asStateFlow()
 
     /** Conversations filtered by the currently selected project (null = standalone only). */
     val displayedConversations: StateFlow<List<ConversationEntity>> =
-        combine(_selectedProjectId, allConversations, standaloneConversations) { projectId, all, standalone ->
+        combine(_selectedProjectId, allConversations, standaloneAndHandoffConversations) { projectId, all, standalone ->
             if (projectId == null) standalone else all.filter { it.projectId == projectId }
         }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 

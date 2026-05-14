@@ -38,6 +38,7 @@ import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.Send
+import androidx.compose.material.icons.filled.SmartToy
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -79,6 +80,7 @@ import kotlinx.coroutines.launch
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.withStyle
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
@@ -382,6 +384,9 @@ fun ChatScreen(
                 }
             }
 
+            // Hoist agent list for multi-agent bubble attribution
+            val activeAgentsForBubbles by viewModel.activeAgents.collectAsState()
+
             // Messages list
             LazyColumn(
                 state = listState,
@@ -390,12 +395,19 @@ fun ChatScreen(
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 items(messages, key = { it.id }) { message ->
+                    // For multi-agent conversations look up sender by ID
+                    val senderAgent = message.senderAgentId?.let { sid ->
+                        activeAgentsForBubbles.firstOrNull { it.id == sid }
+                    }
+                    val bubbleAgentName = senderAgent?.name ?: uiState.currentAgent?.name
+                    val bubbleAgentColor = (senderAgent?.color ?: uiState.currentAgent?.color)
+                        ?.takeIf { it != 0 }
+                        ?.let { Color(it).copy(alpha = 0.22f) }
                     MessageBubble(
                         message = message,
-                        agentName = uiState.currentAgent?.name,
-                        assistantBubbleColor = uiState.currentAgent?.color
-                            ?.takeIf { it != 0 }
-                            ?.let { Color(it).copy(alpha = 0.22f) },
+                        agentName = bubbleAgentName,
+                        assistantBubbleColor = bubbleAgentColor,
+                        showAgentLabel = message.senderAgentId != null && uiState.currentAgent == null,
                         onPinToAgent = if (uiState.currentAgentId != null) { id, content ->
                             viewModel.pinMessageToAgentMemory(id, content)
                         } else null
@@ -483,6 +495,61 @@ fun ChatScreen(
                         verticalAlignment = Alignment.Bottom,
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
+                    // @mention agent picker popup
+                    if (!uiState.mentionableAgents.isEmpty()) {
+                        val atIndex = inputText.lastIndexOf('@')
+                        Surface(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 8.dp, vertical = 4.dp),
+                            shape = RoundedCornerShape(12.dp),
+                            color = MaterialTheme.colorScheme.surfaceVariant,
+                            tonalElevation = 8.dp
+                        ) {
+                            Column {
+                                uiState.mentionableAgents.forEach { agent ->
+                                    val agentColor = if (agent.color != 0)
+                                        Color(agent.color) else MaterialTheme.colorScheme.primary
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clickable {
+                                                // Replace @query with @AgentName
+                                                val newText = if (atIndex >= 0)
+                                                    inputText.substring(0, atIndex) + "@${agent.name} "
+                                                else inputText + "@${agent.name} "
+                                                inputText = newText
+                                                viewModel.dismissAgentMentionPicker()
+                                            }
+                                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(8.dp)
+                                                .background(agentColor, CircleShape)
+                                        )
+                                        Column {
+                                            Text(
+                                                agent.name,
+                                                style = MaterialTheme.typography.bodyMedium,
+                                                color = MaterialTheme.colorScheme.onSurface
+                                            )
+                                            if (agent.role.isNotBlank()) {
+                                                Text(
+                                                    agent.role,
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
                     OutlinedTextField(
                         value = inputText,
                         onValueChange = { newValue ->
@@ -492,12 +559,14 @@ fun ChatScreen(
                             } else if (uiState.showSkillPicker) {
                                 viewModel.dismissSkillPicker()
                             }
+                            // Drive the @mention agent picker
+                            viewModel.onInputTextChanged(newValue)
                             // Pre-fetch semantic recall while the user is typing
                             if (newValue.length > 10) {
                                 viewModel.prepareSemanticRecall(newValue)
                             }
                         },
-                        placeholder = { Text("Message… (type / for skills)") },
+                        placeholder = { Text("Message… (type / for skills, @ to mention an agent)") },
                         modifier = Modifier.weight(1f),
                         maxLines = 5,
                         keyboardOptions = KeyboardOptions(
@@ -912,6 +981,8 @@ private fun MessageBubble(
     message: ChatMessage,
     agentName: String? = null,
     assistantBubbleColor: Color? = null,
+    /** When true, show the agent name above the bubble (for multi-agent conversations). */
+    showAgentLabel: Boolean = false,
     onPinToAgent: ((messageId: String, content: String) -> Unit)? = null
 ) {
     val isUser = message.role == MessageRole.USER
@@ -966,6 +1037,22 @@ private fun MessageBubble(
         ),
         label = "cursorAlpha"
     )
+
+    // Agent attribution label for multi-agent conversations
+    if (showAgentLabel && agentName != null && !message.isStreaming) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 4.dp, bottom = 2.dp),
+            horizontalArrangement = Arrangement.Start
+        ) {
+            Text(
+                text = agentName,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
 
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -1106,7 +1193,24 @@ private fun MessageBubble(
                         } else {
                             Text(
                                 text = buildAnnotatedString {
-                                    append(message.content)
+                                    // Highlight @AgentName tokens in the message
+                                    val raw = message.content
+                                    val mentionRegex = Regex("@(\\S+)")
+                                    var lastEnd = 0
+                                    for (match in mentionRegex.findAll(raw)) {
+                                        if (match.range.first > lastEnd) {
+                                            append(raw.substring(lastEnd, match.range.first))
+                                        }
+                                        withStyle(SpanStyle(
+                                            color = Color.White,
+                                            background = Color.White.copy(alpha = 0.20f),
+                                            fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold
+                                        )) {
+                                            append(match.value)
+                                        }
+                                        lastEnd = match.range.last + 1
+                                    }
+                                    if (lastEnd < raw.length) append(raw.substring(lastEnd))
                                     if (message.isStreaming) {
                                         withStyle(SpanStyle(color = Color.White.copy(alpha = cursorAlpha))) {
                                             append("\u258C")

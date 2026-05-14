@@ -94,7 +94,11 @@ data class ChatUiState(
      * Pre-built recent-context block (conversations from the last 48 h) for the current agent.
      * Built in [loadAgent] and injected into context by [buildOllamaHistory].
      */
-    val recentContextSnippet: String = ""
+    val recentContextSnippet: String = "",
+    /** Non-null while the user is typing an @mention; drives the agent picker popup. */
+    val agentMentionQuery: String? = null,
+    /** Agents shown in the @mention popup, filtered by the current query. */
+    val mentionableAgents: List<AgentEntity> = emptyList()
 ) {
     /** True when extended reasoning is enabled for this conversation. */
     val isThinkingOn: Boolean
@@ -112,6 +116,10 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     private val agentRepo = app.agentRepository
     private val embeddingRepo = app.embeddingRepository
 
+    /** All active agents — drives the @mention popup and the initiate_agent_convo tool. */
+    val activeAgents: StateFlow<List<AgentEntity>> =
+        agentRepo.activeAgents().stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
     private val _messages = MutableStateFlow<List<ChatMessage>>(emptyList())
     val messages: StateFlow<List<ChatMessage>> = _messages.asStateFlow()
 
@@ -119,6 +127,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     val uiState: StateFlow<ChatUiState> = _uiState.asStateFlow()
 
     private var sendJob: kotlinx.coroutines.Job? = null
+    /** Active only while viewing an AGENT_HANDOFF conversation — pushes DB writes to _messages. */
+    private var handoffObserverJob: kotlinx.coroutines.Job? = null
 
     var currentServer: OllamaServer? = null
     var currentModel: String = ""
@@ -170,6 +180,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         currentConversationId = null
         titleGenerated = false
         _messages.value = emptyList()
+        handoffObserverJob?.cancel()
+        handoffObserverJob = null
         _uiState.value = _uiState.value.copy(
             disabledToolNames = emptySet(),
             supportsThinking = false,
@@ -226,6 +238,17 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             if (!alreadyActiveAndLoading) {
                 _messages.value = repo.getMessages(conversationId)
             }
+            // For AGENT_HANDOFF conversations, keep _messages live so worker output appears.
+            handoffObserverJob?.cancel()
+            if (entity.conversationType == "AGENT_HANDOFF") {
+                handoffObserverJob = viewModelScope.launch {
+                    repo.observeMessages(conversationId).collect { msgs ->
+                        // Don't clobber an in-progress streaming bubble from the user's own message
+                        val hasStreaming = _messages.value.any { it.isStreaming }
+                        if (!hasStreaming) _messages.value = msgs
+                    }
+                }
+            }
             val hadThinking = _messages.value.any { it.thinkingContent != null }
             _uiState.value = _uiState.value.copy(
                 thinkingEnabled = entity.thinkingEnabled,
@@ -280,6 +303,9 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             if (_uiState.value.currentAgentId != null) {
                 add(app.formMemoryRepository.tool.toOllamaTool())
                 add(app.skillActivationRepository.tool.toOllamaTool())
+                val currentAgentId = _uiState.value.currentAgentId!!
+                val agentConvoTool = app.agentConversationRepository.buildTool(currentAgentId, activeAgents.value)
+                if (agentConvoTool != null) add(agentConvoTool)
             }
         }
         _uiState.value = _uiState.value.copy(availableTools = builtInTools + mcpTools)
@@ -307,6 +333,33 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         _uiState.value = _uiState.value.copy(
             thinkingBudget = tokens.coerceIn(0, 32768)
         )
+    }
+
+    // ── @mention agent picker ─────────────────────────────────────────────────
+
+    /** Called on every input change; detects `@` to open/update the agent mention picker. */
+    fun onInputTextChanged(text: String) {
+        val atIndex = text.lastIndexOf('@')
+        if (atIndex >= 0) {
+            val query = text.substring(atIndex + 1)
+            if (!query.contains(' ')) {
+                val others = activeAgents.value.filter { it.id != _uiState.value.currentAgentId }
+                val filtered = if (query.isBlank()) others
+                    else others.filter { it.name.startsWith(query, ignoreCase = true) }
+                _uiState.value = _uiState.value.copy(
+                    agentMentionQuery = query,
+                    mentionableAgents = filtered
+                )
+                return
+            }
+        }
+        if (_uiState.value.agentMentionQuery != null) {
+            _uiState.value = _uiState.value.copy(agentMentionQuery = null, mentionableAgents = emptyList())
+        }
+    }
+
+    fun dismissAgentMentionPicker() {
+        _uiState.value = _uiState.value.copy(agentMentionQuery = null, mentionableAgents = emptyList())
     }
 
     /**

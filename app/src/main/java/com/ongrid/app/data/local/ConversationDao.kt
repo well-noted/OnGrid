@@ -49,4 +49,13 @@ interface ConversationDao {
 
     @Query("SELECT * FROM conversations WHERE agentId = :agentId AND updatedAt >= :sinceMs ORDER BY updatedAt DESC")
     suspend fun getRecentByAgent(agentId: String, sinceMs: Long): List<ConversationEntity>
+
+    @Query("SELECT * FROM conversations WHERE conversationType = 'AGENT_HANDOFF' ORDER BY updatedAt DESC")
+    fun getAgentHandoffConversations(): Flow<List<ConversationEntity>>
+
+    @Query("SELECT * FROM conversations WHERE conversationType = 'AGENT_HANDOFF' AND id = :id LIMIT 1")
+    suspend fun getAgentHandoffById(id: String): ConversationEntity?
+
+    @Query("SELECT * FROM conversations WHERE ((agentId IS NULL OR agentId = '') AND (projectId IS NULL OR projectId = '') AND conversationType != 'AGENT_HANDOFF') OR conversationType = 'AGENT_HANDOFF' ORDER BY updatedAt DESC")
+    fun standaloneAndHandoffConversations(): Flow<List<ConversationEntity>>
 }
