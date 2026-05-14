@@ -297,7 +297,19 @@ class ChatForegroundService : Service() {
                     )
                     app.chatServiceChannel.send(ChatServiceEvent.AppendMessage(toolResultMsg))
 
-                    nextMessages += OllamaChatMessage(role = "tool", content = resultText)
+                    // Truncate large tool results before adding to history. The UI bubble shows
+                    // the full content, but the model only needs enough to act on — a full article
+                    // HTML dump can be 20K+ characters and silently overflow the context window,
+                    // causing the follow-up turn to return empty.
+                    // Cap scales with the model's context window: ~25% of numCtx (in chars),
+                    // so a 3B model at 32K gets ~32K chars while a 70B at 128K gets ~128K chars.
+                    val numCtx = currentRequest.options?.numCtx ?: 32768
+                    val maxToolResultChars = (numCtx * 4 * 0.25).toInt().coerceIn(4000, 24000)
+                    val historyContent = if (resultText.length > maxToolResultChars)
+                        resultText.take(maxToolResultChars) +
+                            "\n\n[Result truncated — ${resultText.length - maxToolResultChars} further characters omitted]"
+                    else resultText
+                    nextMessages += OllamaChatMessage(role = "tool", content = historyContent)
                 }
 
                 // If any tool failed, inject a user nudge so the model retries with

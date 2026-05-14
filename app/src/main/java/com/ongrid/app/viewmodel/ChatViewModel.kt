@@ -43,6 +43,8 @@ data class ChatUiState(
     val disabledToolNames: Set<String> = emptySet(),
     /** True when the current model advertises the "thinking" capability. */
     val supportsThinking: Boolean = false,
+    /** True when the current model advertises the "tools" capability. */
+    val supportsTools: Boolean = false,
     /** Whether extended reasoning is enabled for this conversation. */
     val thinkingEnabled: Boolean = false,
     /** True once a ThinkingToken arrived this turn (for live banner display only). */
@@ -333,9 +335,11 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
         val history = buildOllamaHistory()
         val disabled = _uiState.value.disabledToolNames
-        val tools = _uiState.value.availableTools
-            .filter { it.function.name !in disabled }
-            .takeIf { it.isNotEmpty() }
+        val tools = if (_uiState.value.supportsTools)
+            _uiState.value.availableTools
+                .filter { it.function.name !in disabled }
+                .takeIf { it.isNotEmpty() }
+        else null
         val contextLength = _uiState.value.modelContextLength
         // Always provide a num_ctx floor so Ollama never silently falls back to its 2048-token
         // default. Without this, the second streaming turn (after tool results are appended to
@@ -1245,17 +1249,15 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    /** Probe the server to see if [modelName] supports thinking; updates [ChatUiState] accordingly. */
+    /** Probe the server for model capabilities (thinking, tools, context length) in one call. */
     private fun checkThinkingSupport(baseUrl: String, modelName: String) {
         viewModelScope.launch {
-            val supported = ollamaRepo.checkThinkingSupport(baseUrl, modelName)
+            val caps = ollamaRepo.fetchModelCapabilities(baseUrl, modelName)
             _uiState.value = _uiState.value.copy(
-                supportsThinking = supported
+                supportsThinking = caps.supportsThinking,
+                supportsTools = caps.supportsTools,
+                modelContextLength = caps.contextLength
             )
-        }
-        viewModelScope.launch {
-            val contextLength = ollamaRepo.detectContextLength(baseUrl, modelName)
-            _uiState.value = _uiState.value.copy(modelContextLength = contextLength)
         }
     }
 }

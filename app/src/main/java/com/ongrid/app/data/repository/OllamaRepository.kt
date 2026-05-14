@@ -25,21 +25,26 @@ class OllamaRepository(private val api: OllamaApi) {
         }
 
     /**
-     * Returns true if the given model advertises the "thinking" capability via /api/show.
-     * Falls back to false on any error so the UI simply hides the thinking button.
+     * Fetches all model capabilities in a single /api/show call.
+     * Falls back to safe defaults on any error.
      */
-    suspend fun checkThinkingSupport(baseUrl: String, modelName: String): Boolean =
+    suspend fun fetchModelCapabilities(baseUrl: String, modelName: String): ModelCapabilities =
         withContext(Dispatchers.IO) {
-            api.showModel(baseUrl, modelName)?.capabilities?.contains("thinking") == true
+            val show = api.showModel(baseUrl, modelName)
+            ModelCapabilities(
+                supportsThinking = show?.capabilities?.contains("thinking") == true,
+                supportsTools = show?.capabilities?.contains("tools") == true,
+                contextLength = show?.contextLength
+            )
         }
 
-    /**
-     * Returns the model's maximum context length from /api/show, or null if unavailable.
-     */
+    /** @deprecated Use [fetchModelCapabilities] to avoid duplicate /api/show calls. */
+    suspend fun checkThinkingSupport(baseUrl: String, modelName: String): Boolean =
+        fetchModelCapabilities(baseUrl, modelName).supportsThinking
+
+    /** @deprecated Use [fetchModelCapabilities] to avoid duplicate /api/show calls. */
     suspend fun detectContextLength(baseUrl: String, modelName: String): Int? =
-        withContext(Dispatchers.IO) {
-            api.showModel(baseUrl, modelName)?.contextLength
-        }
+        fetchModelCapabilities(baseUrl, modelName).contextLength
 
     fun streamChat(
         baseUrl: String,
@@ -67,3 +72,9 @@ class OllamaRepository(private val api: OllamaApi) {
             ?.take(80)
     }
 }
+
+data class ModelCapabilities(
+    val supportsThinking: Boolean = false,
+    val supportsTools: Boolean = false,
+    val contextLength: Int? = null
+)
