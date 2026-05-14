@@ -391,6 +391,18 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
      * main thread, while the app is still foregrounded.
      */
     fun sendMessage(text: String) {
+        // In an agent handoff conversation the turn loop is driven by the background worker.
+        // The user can inject a message that the next-speaking agent will see, but we do NOT
+        // start a normal streaming response — just persist it and let the worker handle it.
+        if (_uiState.value.isAgentHandoff) {
+            val convId = currentConversationId ?: return
+            viewModelScope.launch {
+                repo.saveMessage(convId, ChatMessage(role = MessageRole.USER, content = text))
+                repo.touchConversation(convId)
+            }
+            return
+        }
+
         val server = currentServer ?: return
         if (currentModel.isBlank()) return
 

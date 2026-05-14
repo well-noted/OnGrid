@@ -1,6 +1,6 @@
 package com.ongrid.app.data.model
 
-enum class MessageRole { USER, ASSISTANT, SYSTEM, TOOL }
+enum class MessageRole { USER, ASSISTANT, SYSTEM, TOOL, TYPING }
 
 data class ChatMessage(
     val id: String = java.util.UUID.randomUUID().toString(),

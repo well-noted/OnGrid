@@ -88,7 +88,15 @@ class AgentConversationWorker(
             val memories = app.agentRepository.memoriesForAgentOnce(currentSpeakerId)
             val history = mutableListOf<OllamaChatMessage>()
 
+            // System prompt: strong identity injection first, then persona, then rules
             val systemContent = buildString {
+                // Identity anchor — must come before anything else so the model doesn't drift
+                append("You are ${currentSpeaker.name}. ")
+                append("You are in a private collaboration channel with ${currentListener.name}.\n")
+                append("IMPORTANT: Write ONLY your own reply as ${currentSpeaker.name}. ")
+                append("Do NOT write any lines, paragraphs, or prefixes for ${currentListener.name}. ")
+                append("Do NOT label your own messages with your name.\n\n")
+
                 if (currentSpeaker.systemPrompt.isNotBlank()) {
                     append(currentSpeaker.systemPrompt)
                     append("\n\n")
@@ -100,22 +108,30 @@ class AgentConversationWorker(
                     val bullet = memories.take(8).joinToString("\n") { "- ${it.content}" }
                     append("What you remember:\n$bullet\n\n")
                 }
-                append("You are in a collaboration channel with ${currentListener.name}.\n")
-                append("Goal: $goal\n\n")
+                append("Goal of this conversation: $goal\n\n")
                 append("When the goal is fully accomplished, end your message with exactly: $GOAL_COMPLETE_SIGNAL")
             }
             history += OllamaChatMessage(role = "system", content = systemContent)
 
+            // Build conversation history from the current speaker's perspective.
+            // Own messages -> "assistant".  Other party's messages -> "user".
+            // We strip the [Name]: prefix from the messages themselves — the system prompt
+            // establishes who's who without needing inline labels that tempt the model to mirror.
             for (msg in messages) {
+                if (msg.role == "TYPING") continue  // skip typing placeholders
                 when {
                     msg.role == "USER" || msg.role == "user" -> {
-                        history += OllamaChatMessage(role = "user", content = "[User]: ${msg.content}")
+                        history += OllamaChatMessage(
+                            role = "user",
+                            content = "[${currentListener.name} passed a message from the user]: ${msg.content}"
+                        )
                     }
                     msg.senderAgentId == currentSpeakerId -> {
                         history += OllamaChatMessage(role = "assistant", content = msg.content)
                     }
                     msg.senderAgentId != null -> {
-                        history += OllamaChatMessage(role = "user", content = "[${currentListener.name}]: ${msg.content}")
+                        // Other agent's message — presented as a plain user turn
+                        history += OllamaChatMessage(role = "user", content = msg.content)
                     }
                 }
             }
@@ -125,6 +141,19 @@ class AgentConversationWorker(
                 messages = history,
                 stream = true,
                 options = OllamaRequestOptions(numCtx = 8192)
+            )
+
+            // Insert a TYPING placeholder so the UI shows a blinking cursor bubble
+            val typingId = "typing_${conversationId}_${currentSpeakerId}"
+            app.database.messageDao().insert(
+                MessageEntity(
+                    id = typingId,
+                    conversationId = conversationId,
+                    role = "TYPING",
+                    content = "",
+                    timestamp = System.currentTimeMillis(),
+                    senderAgentId = currentSpeakerId
+                )
             )
 
             var responseText: String? = null
@@ -152,6 +181,9 @@ class AgentConversationWorker(
                     Log.w(TAG, "Turn $turnCount attempt $attempt failed: ${e.message}")
                 }
             }
+
+            // Always remove the typing placeholder regardless of outcome
+            app.database.messageDao().deleteById(typingId)
 
             if (responseText == null) {
                 Log.e(TAG, "Turn $turnCount exhausted all retries, aborting")

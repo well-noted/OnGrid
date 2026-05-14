@@ -1085,8 +1085,8 @@ private fun MessageBubble(
         label = "cursorAlpha"
     )
 
-    // Agent attribution label for multi-agent conversations
-    if (showAgentLabel && agentName != null && !message.isStreaming) {
+    // Agent attribution label for multi-agent conversations (shown during typing too)
+    if (showAgentLabel && agentName != null) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
