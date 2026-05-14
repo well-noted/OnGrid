@@ -16,10 +16,14 @@ import com.ongrid.app.data.local.MessageEntity
 import com.ongrid.app.data.model.OllamaChatMessage
 import com.ongrid.app.data.model.OllamaChatRequest
 import com.ongrid.app.data.model.OllamaRequestOptions
+import kotlinx.coroutines.delay
 import java.util.UUID
+import java.util.concurrent.TimeUnit
 
 private const val TAG = "AgentConversationWorker"
 private const val MAX_TURNS = 20
+private const val MAX_RETRIES_PER_TURN = 4
+private const val RETRY_BASE_DELAY_MS = 6_000L  // 6 s, 12 s, 18 s, 24 s
 const val GOAL_COMPLETE_SIGNAL = "[GOAL COMPLETE]"
 
 /**
@@ -28,6 +32,11 @@ const val GOAL_COMPLETE_SIGNAL = "[GOAL COMPLETE]"
  * Each invocation runs up to [MAX_TURNS] alternating turns.  After each turn the
  * response is persisted to the database.  If either agent ends its message with
  * [GOAL_COMPLETE_SIGNAL] the loop exits early and a completion notification is posted.
+ *
+ * The worker starts with a short initial delay so that Ollama has time to finish the
+ * initiating agent's streaming response before the first turn fires.  Within each turn
+ * it retries up to [MAX_RETRIES_PER_TURN] times with linear backoff in case Ollama is
+ * still busy.
  *
  * Input data keys:
  *  - [KEY_CONVERSATION_ID]  The AGENT_HANDOFF conversation to drive.
@@ -62,14 +71,18 @@ class AgentConversationWorker(
         Log.d(TAG, "Starting agent conversation $conversationId")
 
         val conversation = app.database.conversationDao().getById(conversationId)
-            ?: return Result.failure()
+            ?: run { Log.e(TAG, "Conversation $conversationId not found"); return Result.failure() }
 
-        val agent1 = app.agentRepository.getAgent(agent1Id) ?: return Result.failure()
-        val agent2 = app.agentRepository.getAgent(agent2Id) ?: return Result.failure()
+        val agent1 = app.agentRepository.getAgent(agent1Id)
+            ?: run { Log.e(TAG, "Agent $agent1Id not found"); return Result.failure() }
+        val agent2 = app.agentRepository.getAgent(agent2Id)
+            ?: run { Log.e(TAG, "Agent $agent2Id not found"); return Result.failure() }
 
         val baseUrl = "http://${conversation.serverHost}:${conversation.serverPort}"
         val modelName = conversation.modelName
         val goal = conversation.goal
+
+        Log.d(TAG, "Agents: ${agent1.name} ↔ ${agent2.name}, model=$modelName, url=$baseUrl")
 
         DreamNotificationHelper.notify(
             applicationContext,
@@ -90,6 +103,8 @@ class AgentConversationWorker(
             val messages = app.database.messageDao().getByConversation(conversationId)
             val currentSpeaker = if (currentSpeakerId == agent1Id) agent1 else agent2
             val currentListener = if (currentListenerId == agent1Id) agent1 else agent2
+
+            Log.d(TAG, "Turn $turnCount: ${currentSpeaker.name} is speaking")
 
             // Memories for the current speaker
             val memories = app.agentRepository.memoriesForAgentOnce(currentSpeakerId)
@@ -122,7 +137,7 @@ class AgentConversationWorker(
             // Conversation history
             for (msg in messages) {
                 when {
-                    msg.role == "user" -> {
+                    msg.role == "USER" || msg.role == "user" -> {
                         // Human joining the conversation
                         history += OllamaChatMessage(role = "user", content = "[User]: ${msg.content}")
                     }
@@ -137,7 +152,7 @@ class AgentConversationWorker(
                 }
             }
 
-            // Call Ollama
+            // --- Call Ollama with retry on failure ---
             val request = OllamaChatRequest(
                 model = modelName,
                 messages = history,
@@ -145,23 +160,34 @@ class AgentConversationWorker(
                 options = OllamaRequestOptions(numCtx = 8192)
             )
 
-            val accumulated = StringBuilder()
-            var turnError: String? = null
-
-            try {
-                app.ollamaRepository.streamChat(baseUrl, request).collect { chunk ->
-                    val delta = chunk.message?.content ?: ""
-                    if (delta.isNotEmpty()) accumulated.append(delta)
+            var responseText: String? = null
+            for (attempt in 1..MAX_RETRIES_PER_TURN) {
+                if (attempt > 1) {
+                    val waitMs = RETRY_BASE_DELAY_MS * (attempt - 1)
+                    Log.w(TAG, "Turn $turnCount attempt $attempt: waiting ${waitMs}ms before retry")
+                    delay(waitMs)
                 }
-            } catch (e: Exception) {
-                turnError = e.message
-                Log.w(TAG, "Turn $turnCount failed: $turnError")
+                val accumulated = StringBuilder()
+                try {
+                    app.ollamaRepository.streamChat(baseUrl, request).collect { chunk ->
+                        val delta = chunk.message?.content ?: ""
+                        if (delta.isNotEmpty()) accumulated.append(delta)
+                    }
+                    val txt = accumulated.toString().trim()
+                    if (txt.isNotBlank()) {
+                        responseText = txt
+                        Log.d(TAG, "Turn $turnCount attempt $attempt succeeded (${txt.length} chars)")
+                        break
+                    } else {
+                        Log.w(TAG, "Turn $turnCount attempt $attempt: blank response from Ollama")
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "Turn $turnCount attempt $attempt failed: ${e.message}")
+                }
             }
 
-            val responseText = accumulated.toString().trim()
-
-            if (turnError != null || responseText.isBlank()) {
-                Log.w(TAG, "Empty or errored turn $turnCount, stopping")
+            if (responseText == null) {
+                Log.e(TAG, "Turn $turnCount exhausted all retries, aborting conversation")
                 break
             }
 
@@ -176,6 +202,8 @@ class AgentConversationWorker(
             )
             app.database.messageDao().insert(msgEntity)
             app.database.conversationDao().updateTimestamp(conversationId, System.currentTimeMillis())
+
+            Log.d(TAG, "Turn $turnCount persisted: ${responseText.take(80)}…")
 
             // Generate/update title after first response if still default
             if (turnCount == 0) {
@@ -228,6 +256,9 @@ class AgentConversationWorker(
         const val KEY_AGENT2_ID = "agent2Id"
         private const val FOREGROUND_NOTIFICATION_ID = 1004
 
+        /** Delay before the first turn, giving Ollama time to finish the initiating agent's response. */
+        private const val INITIAL_DELAY_SECONDS = 8L
+
         fun enqueue(
             context: Context,
             conversationId: String,
@@ -242,6 +273,7 @@ class AgentConversationWorker(
                         KEY_AGENT2_ID to agent2Id
                     )
                 )
+                .setInitialDelay(INITIAL_DELAY_SECONDS, TimeUnit.SECONDS)
                 .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
                 .addTag("agent_convo_$conversationId")
                 .build()

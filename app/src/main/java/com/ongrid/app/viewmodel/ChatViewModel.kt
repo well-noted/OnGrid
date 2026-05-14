@@ -242,10 +242,10 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             handoffObserverJob?.cancel()
             if (entity.conversationType == "AGENT_HANDOFF") {
                 handoffObserverJob = viewModelScope.launch {
+                    // AGENT_HANDOFF conversations are driven entirely by the background worker;
+                    // there is no streaming bubble to protect, so always apply DB updates.
                     repo.observeMessages(conversationId).collect { msgs ->
-                        // Don't clobber an in-progress streaming bubble from the user's own message
-                        val hasStreaming = _messages.value.any { it.isStreaming }
-                        if (!hasStreaming) _messages.value = msgs
+                        _messages.value = msgs
                     }
                 }
             }
