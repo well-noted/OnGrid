@@ -134,6 +134,8 @@ fun ChatScreen(
     val projectGroupingSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var isCompressing by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
+    // Hoisted here so both the TopAppBar (agent handoff header) and LazyColumn bubbles can use it
+    val activeAgentsForBubbles by viewModel.activeAgents.collectAsState()
 
     // Auto-scroll to bottom when new messages arrive
     LaunchedEffect(messages.size) {
@@ -146,23 +148,71 @@ fun ChatScreen(
         topBar = {
             TopAppBar(
                 title = {
-                    Column {
-                        TextButton(
-                            onClick = { showModelPicker = true },
-                            contentPadding = PaddingValues(0.dp)
-                        ) {
-                            Text(
-                                viewModel.currentModel.substringBefore(":") + " ▾",
-                                style = MaterialTheme.typography.titleMedium,
-                                color = MaterialTheme.colorScheme.onSurface
-                            )
+                    if (uiState.isAgentHandoff) {
+                        // Agent handoff: show participant chips instead of model picker
+                        val participantAgents = uiState.handoffParticipantIds.mapNotNull { id ->
+                            activeAgentsForBubbles.firstOrNull { it.id == id }
                         }
-                        viewModel.currentServer?.let { server ->
-                            Text(
-                                server.displayName,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
+                        Column(verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(2.dp)) {
+                            Row(
+                                horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(6.dp),
+                                verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
+                            ) {
+                                participantAgents.forEachIndexed { index, agent ->
+                                    if (index > 0) {
+                                        Text("↔", style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                    val agentColor = if (agent.color != 0)
+                                        androidx.compose.ui.graphics.Color(agent.color)
+                                    else MaterialTheme.colorScheme.primary
+                                    Row(
+                                        verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+                                        horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(4.dp)
+                                    ) {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(8.dp)
+                                                .clip(CircleShape)
+                                                .background(agentColor)
+                                        )
+                                        Text(
+                                            agent.name,
+                                            style = MaterialTheme.typography.titleSmall,
+                                            color = MaterialTheme.colorScheme.onSurface
+                                        )
+                                    }
+                                }
+                            }
+                            if (uiState.handoffGoal.isNotBlank()) {
+                                Text(
+                                    uiState.handoffGoal.take(50),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                                )
+                            }
+                        }
+                    } else {
+                        Column {
+                            TextButton(
+                                onClick = { showModelPicker = true },
+                                contentPadding = PaddingValues(0.dp)
+                            ) {
+                                Text(
+                                    viewModel.currentModel.substringBefore(":") + " ▾",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                            }
+                            viewModel.currentServer?.let { server ->
+                                Text(
+                                    server.displayName,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
                         }
                     }
                 },
@@ -173,7 +223,7 @@ fun ChatScreen(
                 },
                 actions = {
                     // Compress context button — shown when context usage > 80%
-                    if (uiState.showCompressionButton && !isCompressing) {
+                    if (!uiState.isAgentHandoff && uiState.showCompressionButton && !isCompressing) {
                         IconButton(onClick = {
                             isCompressing = true
                             viewModel.compressContext()
@@ -186,7 +236,7 @@ fun ChatScreen(
                             )
                         }
                     }
-                    if (uiState.supportsThinking) {
+                    if (!uiState.isAgentHandoff && uiState.supportsThinking) {
                         IconButton(onClick = { showThinkingSheet = true }) {
                             Icon(
                                 Icons.Default.Psychology,
@@ -383,9 +433,6 @@ fun ChatScreen(
                     }
                 }
             }
-
-            // Hoist agent list for multi-agent bubble attribution
-            val activeAgentsForBubbles by viewModel.activeAgents.collectAsState()
 
             // Messages list
             LazyColumn(

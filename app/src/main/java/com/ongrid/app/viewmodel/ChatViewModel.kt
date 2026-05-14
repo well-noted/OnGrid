@@ -98,7 +98,13 @@ data class ChatUiState(
     /** Non-null while the user is typing an @mention; drives the agent picker popup. */
     val agentMentionQuery: String? = null,
     /** Agents shown in the @mention popup, filtered by the current query. */
-    val mentionableAgents: List<AgentEntity> = emptyList()
+    val mentionableAgents: List<AgentEntity> = emptyList(),
+    /** True when the current conversation is an agent-to-agent handoff. */
+    val isAgentHandoff: Boolean = false,
+    /** Participant agent IDs for the handoff conversation (agent1, agent2). */
+    val handoffParticipantIds: List<String> = emptyList(),
+    /** Goal text for the handoff conversation (shown in the header). */
+    val handoffGoal: String = ""
 ) {
     /** True when extended reasoning is enabled for this conversation. */
     val isThinkingOn: Boolean
@@ -183,6 +189,9 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         handoffObserverJob?.cancel()
         handoffObserverJob = null
         _uiState.value = _uiState.value.copy(
+            isAgentHandoff = false,
+            handoffParticipantIds = emptyList(),
+            handoffGoal = "",
             disabledToolNames = emptySet(),
             supportsThinking = false,
             thinkingEnabled = false,
@@ -240,7 +249,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             }
             // For AGENT_HANDOFF conversations, keep _messages live so worker output appears.
             handoffObserverJob?.cancel()
-            if (entity.conversationType == "AGENT_HANDOFF") {
+            val isHandoff = entity.conversationType == "AGENT_HANDOFF"
+            if (isHandoff) {
                 handoffObserverJob = viewModelScope.launch {
                     // AGENT_HANDOFF conversations are driven entirely by the background worker;
                     // there is no streaming bubble to protect, so always apply DB updates.
@@ -249,11 +259,22 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     }
                 }
             }
+            val participantIds: List<String> = if (isHandoff) {
+                try {
+                    com.google.gson.Gson().fromJson(
+                        entity.participantAgentIds,
+                        object : com.google.gson.reflect.TypeToken<List<String>>() {}.type
+                    )
+                } catch (e: Exception) { emptyList() }
+            } else emptyList()
             val hadThinking = _messages.value.any { it.thinkingContent != null }
             _uiState.value = _uiState.value.copy(
                 thinkingEnabled = entity.thinkingEnabled,
                 lastTurnUsedThinking = hadThinking,
-                currentProjectId = entity.projectId
+                currentProjectId = entity.projectId,
+                isAgentHandoff = isHandoff,
+                handoffParticipantIds = participantIds,
+                handoffGoal = if (isHandoff) entity.goal else ""
             )
             // Load project memories if there's an associated project
             entity.projectId?.let { loadProjectMemories(it) }
