@@ -25,5 +25,7 @@ data class MessageEntity(
     val thinkingContent: String = "",
     val timestamp: Long,
     /** For AGENT_HANDOFF conversations: which agent produced this message. Null for user/tool/system messages. */
-    val senderAgentId: String? = null
+    val senderAgentId: String? = null,
+    /** The name of the tool that produced this TOOL-role message (e.g. "web_search"). Null for non-tool messages. */
+    val toolName: String? = null
 )

@@ -7,7 +7,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 
 @Database(
     entities = [ProjectEntity::class, ConversationEntity::class, MessageEntity::class, SavedServerEntity::class, SkillEntity::class, ProjectMemoryEntity::class, AgentEntity::class, AgentMemoryEntity::class, DreamLogEntity::class, DreamScheduleEntity::class, ConversationEmbeddingEntity::class],
-    version = 13,
+    version = 14,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -22,6 +22,12 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun dreamLogDao(): DreamLogDao
     abstract fun dreamScheduleDao(): DreamScheduleDao
     abstract fun conversationEmbeddingDao(): ConversationEmbeddingDao
+}
+
+val MIGRATION_13_14 = object : Migration(13, 14) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE messages ADD COLUMN toolName TEXT")
+    }
 }
 
 val MIGRATION_12_13 = object : Migration(12, 13) {

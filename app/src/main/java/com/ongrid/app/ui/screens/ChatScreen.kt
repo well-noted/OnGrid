@@ -1259,7 +1259,7 @@ private fun MessageBubble(
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Text(
-                                    "\uD83E\uDDE0 Reasoning",
+                                    if (agentName != null) "\uD83E\uDDE0 ${agentName} reasoning" else "\uD83E\uDDE0 Reasoning",
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onTertiaryContainer
                                 )

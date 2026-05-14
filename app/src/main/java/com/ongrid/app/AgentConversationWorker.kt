@@ -161,6 +161,7 @@ class AgentConversationWorker(
             // --- Tool-call loop ---
             var currentHistory = baseHistory.toMutableList()
             var responseText: String? = null
+            var accumulatedThinking = StringBuilder()  // collected across the whole turn
             var toolDepth = 0
             var turnAborted = false
 
@@ -189,6 +190,10 @@ class AgentConversationWorker(
                     var lastDbWriteLength = 0
                     try {
                         app.ollamaRepository.streamChat(baseUrl, request).collect { chunk ->
+                            // Collect reasoning tokens (thinking-capable models only)
+                            val thinkingDelta = chunk.message?.thinking ?: ""
+                            if (thinkingDelta.isNotEmpty()) accumulatedThinking.append(thinkingDelta)
+
                             val delta = chunk.message?.content ?: ""
                             if (delta.isNotEmpty()) {
                                 accumulated.append(delta)
@@ -223,7 +228,7 @@ class AgentConversationWorker(
                     break
                 }
 
-                // Has tool calls → execute them and loop back
+                // Has tool calls → execute them, persist results to DB, and loop back
                 Log.d(TAG, "Turn $turnCount depth $toolDepth: executing ${toolCalls.size} tool(s)")
                 currentHistory += OllamaChatMessage(
                     role = "assistant",
@@ -231,7 +236,7 @@ class AgentConversationWorker(
                     tool_calls = toolCalls
                 )
                 for (toolCall in toolCalls) {
-                    val (result, _) = executor.execute(
+                    val (result, isError) = executor.execute(
                         funcName = toolCall.function.name,
                         args = toolCall.function.arguments,
                         agentId = currentSpeakerId,
@@ -239,6 +244,19 @@ class AgentConversationWorker(
                     )
                     Log.d(TAG, "Tool ${toolCall.function.name} result: ${result.take(80)}")
                     currentHistory += OllamaChatMessage(role = "tool", content = result)
+
+                    // Persist the tool result so it appears as a bubble in the chat
+                    app.database.messageDao().insert(
+                        MessageEntity(
+                            id = UUID.randomUUID().toString(),
+                            conversationId = conversationId,
+                            role = "TOOL",
+                            content = result,
+                            timestamp = System.currentTimeMillis(),
+                            senderAgentId = currentSpeakerId,
+                            toolName = toolCall.function.name
+                        )
+                    )
                 }
                 toolDepth++
             }
@@ -262,18 +280,23 @@ class AgentConversationWorker(
                 break
             }
 
-            // Persist the agent's response (strip the goal signal from displayed text)
+            // Persist the agent's response (strip the goal signal from displayed text).
+            // Include any reasoning/thinking content the model produced this turn.
             val displayText = responseText.replace(GOAL_COMPLETE_SIGNAL, "").trim()
+            val thinkingText = accumulatedThinking.toString().trim()
             app.database.messageDao().insert(
                 MessageEntity(
                     id = UUID.randomUUID().toString(),
                     conversationId = conversationId,
                     role = "ASSISTANT",
                     content = displayText,
+                    thinkingContent = thinkingText,
                     timestamp = System.currentTimeMillis(),
                     senderAgentId = currentSpeakerId
                 )
             )
+            // Reset thinking accumulator for the next turn
+            accumulatedThinking = StringBuilder()
             app.database.conversationDao().updateTimestamp(conversationId, System.currentTimeMillis())
             Log.d(TAG, "Turn $turnCount persisted (${displayText.length} chars)")
 

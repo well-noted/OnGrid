@@ -147,6 +147,7 @@ private fun MessageEntity.toChatMessage(): ChatMessage {
         role = if (isTyping) MessageRole.ASSISTANT else MessageRole.valueOf(role),
         content = content,
         thinkingContent = thinkingContent.ifEmpty { null },
+        toolCallId = toolName,
         timestamp = timestamp,
         senderAgentId = senderAgentId,
         // TYPING rows render as a blinking cursor bubble until the worker replaces them
