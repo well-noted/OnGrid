@@ -4,6 +4,7 @@ import android.app.Application
 import android.content.Intent
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.ongrid.app.AgentConversationWorker
 import com.ongrid.app.ChatForegroundService
 import com.ongrid.app.ChatServiceEvent
 import com.ongrid.app.OnGridApplication
@@ -274,7 +275,10 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 currentProjectId = entity.projectId,
                 isAgentHandoff = isHandoff,
                 handoffParticipantIds = participantIds,
-                handoffGoal = if (isHandoff) entity.goal else ""
+                handoffGoal = if (isHandoff) entity.goal else "",
+                // Clear stale agent identity so it can't leak into the @mention picker
+                currentAgentId = if (isHandoff) null else _uiState.value.currentAgentId,
+                currentAgent = if (isHandoff) null else _uiState.value.currentAgent
             )
             // Load project memories if there's an associated project
             entity.projectId?.let { loadProjectMemories(it) }
@@ -364,9 +368,16 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         if (atIndex >= 0) {
             val query = text.substring(atIndex + 1)
             if (!query.contains(' ')) {
-                val others = activeAgents.value.filter { it.id != _uiState.value.currentAgentId }
-                val filtered = if (query.isBlank()) others
-                    else others.filter { it.name.startsWith(query, ignoreCase = true) }
+                // In a handoff conversation show only the actual participants.
+                // In a normal chat exclude the current agent (can't @-mention yourself).
+                val pool = if (_uiState.value.isAgentHandoff) {
+                    val participantIds = _uiState.value.handoffParticipantIds.toSet()
+                    activeAgents.value.filter { it.id in participantIds }
+                } else {
+                    activeAgents.value.filter { it.id != _uiState.value.currentAgentId }
+                }
+                val filtered = if (query.isBlank()) pool
+                    else pool.filter { it.name.startsWith(query, ignoreCase = true) }
                 _uiState.value = _uiState.value.copy(
                     agentMentionQuery = query,
                     mentionableAgents = filtered
@@ -396,9 +407,52 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         // start a normal streaming response — just persist it and let the worker handle it.
         if (_uiState.value.isAgentHandoff) {
             val convId = currentConversationId ?: return
+            val participantIds = _uiState.value.handoffParticipantIds
+            if (participantIds.size < 2) return
+            val agent1Id = participantIds[0]
+            val agent2Id = participantIds[1]
             viewModelScope.launch {
                 repo.saveMessage(convId, ChatMessage(role = MessageRole.USER, content = text))
                 repo.touchConversation(convId)
+
+                // If the user @mentioned a participant by name, direct to that agent.
+                // Otherwise use the natural next speaker (whoever didn't last speak).
+                val participants = activeAgents.value.filter { it.id in participantIds }
+                val mentionedAgent = Regex("@(\\S+)").findAll(text)
+                    .mapNotNull { match ->
+                        val name = match.groupValues[1]
+                        participants.firstOrNull { it.name.equals(name, ignoreCase = true) }
+                    }
+                    .firstOrNull()
+
+                val nextSpeakerId = if (mentionedAgent != null) {
+                    mentionedAgent.id
+                } else {
+                    // Default: whoever did NOT last speak
+                    val lastAgentMsg = _messages.value
+                        .lastOrNull { it.senderAgentId != null && it.role != MessageRole.TYPING }
+                    when (lastAgentMsg?.senderAgentId) {
+                        agent1Id -> agent2Id
+                        agent2Id -> agent1Id
+                        else -> agent2Id
+                    }
+                }
+                // Re-enqueue only if no worker is currently running for this conversation.
+                val workManager = androidx.work.WorkManager.getInstance(getApplication())
+                val infos = workManager.getWorkInfosByTag("agent_convo_$convId").get()
+                val alreadyRunning = infos.any {
+                    it.state == androidx.work.WorkInfo.State.RUNNING ||
+                    it.state == androidx.work.WorkInfo.State.ENQUEUED
+                }
+                if (!alreadyRunning) {
+                    AgentConversationWorker.enqueue(
+                        getApplication<Application>(),
+                        conversationId = convId,
+                        agent1Id = agent1Id,
+                        agent2Id = agent2Id,
+                        startAgentId = nextSpeakerId
+                    )
+                }
             }
             return
         }

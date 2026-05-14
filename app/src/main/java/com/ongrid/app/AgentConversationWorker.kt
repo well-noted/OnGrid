@@ -75,8 +75,11 @@ class AgentConversationWorker(
 
         var turnCount = 0
         var goalReached = false
-        var currentSpeakerId = agent2Id
-        var currentListenerId = agent1Id
+        // Allow caller to specify which agent speaks first (e.g. when resuming after user input).
+        // Default: agent2 goes first (they respond to agent1's opening message).
+        val startAgentId = inputData.getString(KEY_START_AGENT_ID) ?: agent2Id
+        var currentSpeakerId = startAgentId
+        var currentListenerId = if (startAgentId == agent1Id) agent2Id else agent1Id
 
         while (turnCount < MAX_TURNS && !goalReached) {
             val messages = app.database.messageDao().getByConversation(conversationId)
@@ -248,22 +251,25 @@ class AgentConversationWorker(
         const val KEY_CONVERSATION_ID = "conversationId"
         const val KEY_AGENT1_ID = "agent1Id"
         const val KEY_AGENT2_ID = "agent2Id"
+        /** Optional: which agent speaks first. Defaults to agent2 if omitted. */
+        const val KEY_START_AGENT_ID = "startAgentId"
         private const val FOREGROUND_NOTIFICATION_ID = 1004
 
         fun enqueue(
             context: Context,
             conversationId: String,
             agent1Id: String,
-            agent2Id: String
+            agent2Id: String,
+            startAgentId: String? = null
         ) {
+            val data = workDataOf(
+                KEY_CONVERSATION_ID to conversationId,
+                KEY_AGENT1_ID to agent1Id,
+                KEY_AGENT2_ID to agent2Id,
+                KEY_START_AGENT_ID to (startAgentId ?: agent2Id)
+            )
             val request = OneTimeWorkRequestBuilder<AgentConversationWorker>()
-                .setInputData(
-                    workDataOf(
-                        KEY_CONVERSATION_ID to conversationId,
-                        KEY_AGENT1_ID to agent1Id,
-                        KEY_AGENT2_ID to agent2Id
-                    )
-                )
+                .setInputData(data)
                 .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
                 .addTag("agent_convo_$conversationId")
                 .build()
