@@ -20,6 +20,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.FilterList
+import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -58,7 +59,8 @@ private enum class ProjectFilter { ALL, ACTIVE, PAUSED, COMPLETE }
 @Composable
 fun ProjectListScreen(
     viewModel: ConversationListViewModel,
-    navigateToProject: (String) -> Unit
+    navigateToProject: (String) -> Unit,
+    onOpenSettings: () -> Unit = {}
 ) {
     val projects by viewModel.projects.collectAsState()
     var selectedFilter by rememberSaveable { mutableStateOf(ProjectFilter.ALL) }
@@ -75,6 +77,9 @@ fun ProjectListScreen(
                 actions = {
                     IconButton(onClick = { showFilterSheet = true }) {
                         Icon(Icons.Outlined.FilterList, contentDescription = "Filter")
+                    }
+                    IconButton(onClick = onOpenSettings) {
+                        Icon(Icons.Outlined.Settings, contentDescription = "Settings")
                     }
                 }
             )

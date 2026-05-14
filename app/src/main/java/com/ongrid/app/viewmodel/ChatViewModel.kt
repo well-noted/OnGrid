@@ -348,7 +348,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             tools = tools,
             // null think = model decides; true/false = explicit override
             think = if (_uiState.value.supportsThinking) _uiState.value.thinkingEnabled else null,
-            options = if (_uiState.value.thinkingEnabled)
+            options = if (_uiState.value.supportsThinking && _uiState.value.thinkingEnabled)
                 OllamaRequestOptions(thinkingBudget = _uiState.value.thinkingBudget, numCtx = safeContextLength)
             else
                 OllamaRequestOptions(numCtx = safeContextLength)

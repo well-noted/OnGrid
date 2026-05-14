@@ -313,7 +313,9 @@ fun AppNavigation() {
 
         composable(Routes.SETTINGS) {
             SettingsScreen(
-                onNavigateBack = { navController.popBackStack() }
+                onNavigateBack = { navController.popBackStack() },
+                onOpenServers = { navController.navigate(Routes.discoveryRoute()) },
+                onOpenMcpServers = { navController.navigate(Routes.MCP_SERVERS) }
             )
         }
 
@@ -458,12 +460,14 @@ private fun MainShell(
                 )
                 "projects" -> ProjectListScreen(
                     viewModel = conversationListViewModel,
-                    navigateToProject = onOpenProject
+                    navigateToProject = onOpenProject,
+                    onOpenSettings = onOpenSettings
                 )
                 "agents" -> AgentListScreen(
                     viewModel = agentViewModel,
                     navigateToAgent = onOpenAgent,
-                    onCreateAgent = {}
+                    onCreateAgent = {},
+                    onOpenSettings = onOpenSettings
                 )
                 else -> ConversationListScreen(
                     viewModel = conversationListViewModel,

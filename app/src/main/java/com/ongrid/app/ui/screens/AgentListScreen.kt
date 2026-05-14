@@ -19,10 +19,12 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.Psychology
+import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
@@ -47,7 +49,8 @@ import java.util.concurrent.TimeUnit
 fun AgentListScreen(
     viewModel: AgentViewModel,
     navigateToAgent: (String) -> Unit,
-    onCreateAgent: () -> Unit
+    onCreateAgent: () -> Unit,
+    onOpenSettings: () -> Unit = {}
 ) {
     val agents by viewModel.allAgents.collectAsState()
 
@@ -57,7 +60,12 @@ fun AgentListScreen(
                 title = { Text("Agents") },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.surface
-                )
+                ),
+                actions = {
+                    IconButton(onClick = onOpenSettings) {
+                        Icon(Icons.Outlined.Settings, contentDescription = "Settings")
+                    }
+                }
             )
         }
     ) { innerPadding ->
