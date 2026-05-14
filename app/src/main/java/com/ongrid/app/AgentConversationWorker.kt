@@ -10,8 +10,6 @@ import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import androidx.work.OutOfQuotaPolicy
 import androidx.work.workDataOf
-import com.google.gson.Gson
-import com.google.gson.reflect.TypeToken
 import com.ongrid.app.data.local.MessageEntity
 import com.ongrid.app.data.model.OllamaChatMessage
 import com.ongrid.app.data.model.OllamaChatRequest
@@ -21,6 +19,7 @@ import java.util.UUID
 
 private const val TAG = "AgentConversationWorker"
 private const val MAX_TURNS = 20
+private const val MAX_TOOL_DEPTH = 6
 private const val MAX_RETRIES_PER_TURN = 4
 private const val RETRY_BASE_DELAY_MS = 6_000L
 const val GOAL_COMPLETE_SIGNAL = "[GOAL COMPLETE]"
@@ -31,7 +30,6 @@ class AgentConversationWorker(
 ) : CoroutineWorker(context, params) {
 
     private val app get() = applicationContext as OnGridApplication
-    private val gson = Gson()
 
     override suspend fun getForegroundInfo(): ForegroundInfo {
         DreamNotificationHelper.ensureChannel(applicationContext)
@@ -63,8 +61,10 @@ class AgentConversationWorker(
         val baseUrl = "http://${conversation.serverHost}:${conversation.serverPort}"
         val modelName = conversation.modelName
         val goal = conversation.goal
+        val executor = AgentToolExecutor(app)
+        val tools = executor.buildTools().takeIf { it.isNotEmpty() }
 
-        Log.d(TAG, "Agents: ${agent1.name} <-> ${agent2.name}, model=$modelName, url=$baseUrl")
+        Log.d(TAG, "Agents: ${agent1.name} <-> ${agent2.name}, model=$modelName, tools=${tools?.size ?: 0}")
 
         DreamNotificationHelper.notify(
             applicationContext,
@@ -75,8 +75,6 @@ class AgentConversationWorker(
 
         var turnCount = 0
         var goalReached = false
-        // Allow caller to specify which agent speaks first (e.g. when resuming after user input).
-        // Default: agent2 goes first (they respond to agent1's opening message).
         val startAgentId = inputData.getString(KEY_START_AGENT_ID) ?: agent2Id
         var currentSpeakerId = startAgentId
         var currentListenerId = if (startAgentId == agent1Id) agent2Id else agent1Id
@@ -86,23 +84,18 @@ class AgentConversationWorker(
             val currentSpeaker = if (currentSpeakerId == agent1Id) agent1 else agent2
             val currentListener = if (currentListenerId == agent1Id) agent1 else agent2
 
-            Log.d(TAG, "Turn $turnCount: ${currentSpeaker.name} is speaking")
+            Log.d(TAG, "Turn $turnCount: ${currentSpeaker.name} speaking")
 
             val memories = app.agentRepository.memoriesForAgentOnce(currentSpeakerId)
-            val history = mutableListOf<OllamaChatMessage>()
 
-            // System prompt: strong identity injection first, then persona, then rules
             val systemContent = buildString {
-                // Identity anchor — must come before anything else so the model doesn't drift
                 append("You are ${currentSpeaker.name}. ")
                 append("You are in a private collaboration channel with ${currentListener.name}.\n")
                 append("IMPORTANT: Write ONLY your own reply as ${currentSpeaker.name}. ")
                 append("Do NOT write any lines, paragraphs, or prefixes for ${currentListener.name}. ")
                 append("Do NOT label your own messages with your name.\n\n")
-
                 if (currentSpeaker.systemPrompt.isNotBlank()) {
-                    append(currentSpeaker.systemPrompt)
-                    append("\n\n")
+                    append(currentSpeaker.systemPrompt); append("\n\n")
                 }
                 if (currentSpeaker.brief.isNotBlank()) {
                     append("Your current context:\n${currentSpeaker.brief}\n\n")
@@ -114,39 +107,26 @@ class AgentConversationWorker(
                 append("Goal of this conversation: $goal\n\n")
                 append("When the goal is fully accomplished, end your message with exactly: $GOAL_COMPLETE_SIGNAL")
             }
-            history += OllamaChatMessage(role = "system", content = systemContent)
 
-            // Build conversation history from the current speaker's perspective.
-            // Own messages -> "assistant".  Other party's messages -> "user".
-            // We strip the [Name]: prefix from the messages themselves — the system prompt
-            // establishes who's who without needing inline labels that tempt the model to mirror.
+            // Build initial history for this turn
+            val baseHistory = mutableListOf<OllamaChatMessage>()
+            baseHistory += OllamaChatMessage(role = "system", content = systemContent)
             for (msg in messages) {
-                if (msg.role == "TYPING") continue  // skip typing placeholders
+                if (msg.role == "TYPING") continue
                 when {
-                    msg.role == "USER" || msg.role == "user" -> {
-                        history += OllamaChatMessage(
+                    msg.role == "USER" || msg.role == "user" ->
+                        baseHistory += OllamaChatMessage(
                             role = "user",
                             content = "[${currentListener.name} passed a message from the user]: ${msg.content}"
                         )
-                    }
-                    msg.senderAgentId == currentSpeakerId -> {
-                        history += OllamaChatMessage(role = "assistant", content = msg.content)
-                    }
-                    msg.senderAgentId != null -> {
-                        // Other agent's message — presented as a plain user turn
-                        history += OllamaChatMessage(role = "user", content = msg.content)
-                    }
+                    msg.senderAgentId == currentSpeakerId ->
+                        baseHistory += OllamaChatMessage(role = "assistant", content = msg.content)
+                    msg.senderAgentId != null ->
+                        baseHistory += OllamaChatMessage(role = "user", content = msg.content)
                 }
             }
 
-            val request = OllamaChatRequest(
-                model = modelName,
-                messages = history,
-                stream = true,
-                options = OllamaRequestOptions(numCtx = 8192)
-            )
-
-            // Insert a TYPING placeholder so the UI shows a blinking cursor bubble
+            // Insert TYPING placeholder so UI shows blinking cursor
             val typingId = "typing_${conversationId}_${currentSpeakerId}"
             app.database.messageDao().insert(
                 MessageEntity(
@@ -159,53 +139,105 @@ class AgentConversationWorker(
                 )
             )
 
+            // --- Tool-call loop ---
+            var currentHistory = baseHistory.toMutableList()
             var responseText: String? = null
-            for (attempt in 1..MAX_RETRIES_PER_TURN) {
-                if (attempt > 1) {
-                    val waitMs = RETRY_BASE_DELAY_MS * (attempt - 1)
-                    Log.w(TAG, "Turn $turnCount attempt $attempt: waiting ${waitMs}ms")
-                    delay(waitMs)
-                }
-                val accumulated = StringBuilder()
-                try {
-                    app.ollamaRepository.streamChat(baseUrl, request).collect { chunk ->
-                        val delta = chunk.message?.content ?: ""
-                        if (delta.isNotEmpty()) accumulated.append(delta)
+            var toolDepth = 0
+            var turnAborted = false
+
+            while (toolDepth <= MAX_TOOL_DEPTH) {
+                val request = OllamaChatRequest(
+                    model = modelName,
+                    messages = currentHistory,
+                    stream = true,
+                    tools = tools,
+                    options = OllamaRequestOptions(numCtx = 8192)
+                )
+
+                // Retry loop for Ollama availability
+                var accumulated = StringBuilder()
+                var toolCalls = emptyList<com.ongrid.app.data.model.OllamaToolCall>()
+                var ollaMaOk = false
+
+                for (attempt in 1..MAX_RETRIES_PER_TURN) {
+                    if (attempt > 1) {
+                        val wait = RETRY_BASE_DELAY_MS * (attempt - 1)
+                        Log.w(TAG, "Turn $turnCount depth $toolDepth attempt $attempt: waiting ${wait}ms")
+                        delay(wait)
                     }
-                    val txt = accumulated.toString().trim()
-                    if (txt.isNotBlank()) {
-                        responseText = txt
-                        Log.d(TAG, "Turn $turnCount attempt $attempt succeeded (${txt.length} chars)")
-                        break
-                    } else {
+                    accumulated = StringBuilder()
+                    toolCalls = emptyList()
+                    try {
+                        app.ollamaRepository.streamChat(baseUrl, request).collect { chunk ->
+                            val delta = chunk.message?.content ?: ""
+                            if (delta.isNotEmpty()) accumulated.append(delta)
+                            chunk.message?.tool_calls?.let { calls ->
+                                if (calls.isNotEmpty()) toolCalls = calls
+                            }
+                        }
+                        if (accumulated.isNotBlank() || toolCalls.isNotEmpty()) {
+                            ollaMaOk = true; break
+                        }
                         Log.w(TAG, "Turn $turnCount attempt $attempt: blank response")
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Turn $turnCount attempt $attempt failed: ${e.message}")
                     }
-                } catch (e: Exception) {
-                    Log.w(TAG, "Turn $turnCount attempt $attempt failed: ${e.message}")
                 }
+
+                if (!ollaMaOk) {
+                    Log.e(TAG, "Turn $turnCount exhausted retries, aborting")
+                    turnAborted = true; break
+                }
+
+                // No tool calls → this is the final text response
+                if (toolCalls.isEmpty()) {
+                    responseText = accumulated.toString().trim()
+                    break
+                }
+
+                // Has tool calls → execute them and loop back
+                Log.d(TAG, "Turn $turnCount depth $toolDepth: executing ${toolCalls.size} tool(s)")
+                currentHistory += OllamaChatMessage(
+                    role = "assistant",
+                    content = accumulated.toString().ifEmpty { null },
+                    tool_calls = toolCalls
+                )
+                for (toolCall in toolCalls) {
+                    val (result, _) = executor.execute(
+                        funcName = toolCall.function.name,
+                        args = toolCall.function.arguments,
+                        agentId = currentSpeakerId,
+                        conversationId = conversationId
+                    )
+                    Log.d(TAG, "Tool ${toolCall.function.name} result: ${result.take(80)}")
+                    currentHistory += OllamaChatMessage(role = "tool", content = result)
+                }
+                toolDepth++
             }
 
-            // Always remove the typing placeholder regardless of outcome
+            // Always clean up typing placeholder
             app.database.messageDao().deleteById(typingId)
 
-            if (responseText == null) {
-                Log.e(TAG, "Turn $turnCount exhausted all retries, aborting")
+            if (turnAborted || responseText == null) {
+                Log.e(TAG, "Turn $turnCount produced no response, stopping")
                 break
             }
 
-            val msgEntity = MessageEntity(
-                id = UUID.randomUUID().toString(),
-                conversationId = conversationId,
-                role = "ASSISTANT",
-                content = responseText,
-                timestamp = System.currentTimeMillis(),
-                senderAgentId = currentSpeakerId
+            // Persist the agent's response
+            app.database.messageDao().insert(
+                MessageEntity(
+                    id = UUID.randomUUID().toString(),
+                    conversationId = conversationId,
+                    role = "ASSISTANT",
+                    content = responseText,
+                    timestamp = System.currentTimeMillis(),
+                    senderAgentId = currentSpeakerId
+                )
             )
-            app.database.messageDao().insert(msgEntity)
             app.database.conversationDao().updateTimestamp(conversationId, System.currentTimeMillis())
+            Log.d(TAG, "Turn $turnCount persisted (${responseText.length} chars)")
 
-            Log.d(TAG, "Turn $turnCount persisted")
-
+            // Update title after first reply
             if (turnCount == 0) {
                 val currentTitle = conversation.title
                 if (currentTitle == "New Conversation" || currentTitle.startsWith("${agent1.name} <->")) {
@@ -227,7 +259,6 @@ class AgentConversationWorker(
             val tmp = currentSpeakerId
             currentSpeakerId = currentListenerId
             currentListenerId = tmp
-
             turnCount++
         }
 
@@ -243,7 +274,7 @@ class AgentConversationWorker(
             serverSubtext = goal.take(60)
         )
 
-        Log.d(TAG, "Agent conversation finished. Turns: $turnCount, goalReached: $goalReached")
+        Log.d(TAG, "Finished. Turns: $turnCount, goalReached: $goalReached")
         return Result.success()
     }
 
@@ -251,7 +282,6 @@ class AgentConversationWorker(
         const val KEY_CONVERSATION_ID = "conversationId"
         const val KEY_AGENT1_ID = "agent1Id"
         const val KEY_AGENT2_ID = "agent2Id"
-        /** Optional: which agent speaks first. Defaults to agent2 if omitted. */
         const val KEY_START_AGENT_ID = "startAgentId"
         private const val FOREGROUND_NOTIFICATION_ID = 1004
 
@@ -262,14 +292,15 @@ class AgentConversationWorker(
             agent2Id: String,
             startAgentId: String? = null
         ) {
-            val data = workDataOf(
-                KEY_CONVERSATION_ID to conversationId,
-                KEY_AGENT1_ID to agent1Id,
-                KEY_AGENT2_ID to agent2Id,
-                KEY_START_AGENT_ID to (startAgentId ?: agent2Id)
-            )
             val request = OneTimeWorkRequestBuilder<AgentConversationWorker>()
-                .setInputData(data)
+                .setInputData(
+                    workDataOf(
+                        KEY_CONVERSATION_ID to conversationId,
+                        KEY_AGENT1_ID to agent1Id,
+                        KEY_AGENT2_ID to agent2Id,
+                        KEY_START_AGENT_ID to (startAgentId ?: agent2Id)
+                    )
+                )
                 .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
                 .addTag("agent_convo_$conversationId")
                 .build()
