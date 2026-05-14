@@ -378,8 +378,8 @@ fun AppNavigation() {
                 onOpenAgent = { agentId ->
                     navController.navigate(Routes.agentDetailRoute(agentId))
                 },
-                onCreateAgent = {
-                    navController.popBackStack()
+                onCreateAgent = { agentId ->
+                    navController.navigate(Routes.agentDetailRoute(agentId))
                 }
             )
         }

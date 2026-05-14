@@ -53,10 +53,11 @@ fun AllAgentsScreen(
     viewModel: AgentViewModel,
     onNavigateBack: () -> Unit,
     onOpenAgent: (agentId: String) -> Unit,
-    onCreateAgent: () -> Unit
+    onCreateAgent: (agentId: String) -> Unit
 ) {
     val allAgents by viewModel.allAgents.collectAsState()
     var selectedTab by remember { mutableStateOf(AgentStatus.ACTIVE) }
+    var showCreateSheet by remember { mutableStateOf(false) }
 
     val displayed = allAgents.filter { it.status == selectedTab }
 
@@ -75,7 +76,7 @@ fun AllAgentsScreen(
             )
         },
         floatingActionButton = {
-            FloatingActionButton(onClick = onCreateAgent) {
+            FloatingActionButton(onClick = { showCreateSheet = true }) {
                 Icon(Icons.Default.Add, contentDescription = "New agent")
             }
         }
@@ -118,6 +119,17 @@ fun AllAgentsScreen(
                     }
                 }
             }
+        }
+
+        if (showCreateSheet) {
+            CreateAgentSheet(
+                onDismiss = { showCreateSheet = false },
+                onCreated = { agent ->
+                    showCreateSheet = false
+                    onCreateAgent(agent.id)
+                },
+                viewModel = viewModel
+            )
         }
     }
 }
