@@ -867,6 +867,33 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         _uiState.value = _uiState.value.copy(isLoading = false, streamingThinkingContent = "")
     }
 
+    /**
+     * Cancel a running AGENT_HANDOFF worker for the current conversation.
+     * Safe to call even if no worker is running — WorkManager ignores the cancel if already done.
+     */
+    fun cancelHandoffConversation() {
+        val convId = currentConversationId ?: return
+        androidx.work.WorkManager.getInstance(getApplication())
+            .cancelAllWorkByTag("agent_convo_$convId")
+        // Remove any lingering TYPING placeholder from messages
+        _messages.value = _messages.value.filter { !it.isStreaming }
+    }
+
+    /**
+     * Delete the current conversation and all its messages from the database.
+     * The caller is responsible for navigating away after this returns.
+     */
+    fun deleteConversation() {
+        val convId = currentConversationId ?: return
+        // Stop any running worker first
+        cancelHandoffConversation()
+        handoffObserverJob?.cancel()
+        handoffObserverJob = null
+        viewModelScope.launch { repo.deleteConversation(convId) }
+        currentConversationId = null
+        _messages.value = emptyList()
+    }
+
     /** Clear all messages for the current conversation (in memory and on disk). */
     fun clearMessages() {
         _messages.value = emptyList()

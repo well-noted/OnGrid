@@ -23,4 +23,8 @@ interface MessageDao {
 
     @Query("DELETE FROM messages WHERE id = :id")
     suspend fun deleteById(id: String)
+
+    /** Update only the content of an existing row — used to stream tokens into the TYPING placeholder. */
+    @Query("UPDATE messages SET content = :content WHERE id = :id")
+    suspend fun updateContent(id: String, content: String)
 }

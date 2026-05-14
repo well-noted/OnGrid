@@ -79,6 +79,10 @@ class AgentConversationWorker(
         var currentSpeakerId = startAgentId
         var currentListenerId = if (startAgentId == agent1Id) agent2Id else agent1Id
 
+        // Dual-consent goal tracking: first agent to signal is recorded here.
+        // The conversation only ends when the *other* agent also signals.
+        var firstGoalSignalerId: String? = null
+
         while (turnCount < MAX_TURNS && !goalReached) {
             val messages = app.database.messageDao().getByConversation(conversationId)
             val currentSpeaker = if (currentSpeakerId == agent1Id) agent1 else agent2
@@ -105,7 +109,14 @@ class AgentConversationWorker(
                     append("What you remember:\n$bullet\n\n")
                 }
                 append("Goal of this conversation: $goal\n\n")
-                append("When the goal is fully accomplished, end your message with exactly: $GOAL_COMPLETE_SIGNAL")
+                // Only invite goal signaling if the other agent hasn't already signaled.
+                if (firstGoalSignalerId == null || firstGoalSignalerId == currentSpeakerId) {
+                    append("When you believe the goal is fully accomplished, end your message with exactly: $GOAL_COMPLETE_SIGNAL")
+                } else {
+                    append("${currentListener.name} believes the goal is accomplished. ")
+                    append("If you agree, end your message with exactly: $GOAL_COMPLETE_SIGNAL. ")
+                    append("Otherwise, continue working toward the goal.")
+                }
             }
 
             // Build initial history for this turn
@@ -119,6 +130,8 @@ class AgentConversationWorker(
                             role = "user",
                             content = "[${currentListener.name} passed a message from the user]: ${msg.content}"
                         )
+                    msg.role == "SYSTEM" ->
+                        baseHistory += OllamaChatMessage(role = "user", content = "[system]: ${msg.content}")
                     msg.senderAgentId == currentSpeakerId ->
                         baseHistory += OllamaChatMessage(role = "assistant", content = msg.content)
                     msg.senderAgentId != null ->
@@ -126,7 +139,7 @@ class AgentConversationWorker(
                 }
             }
 
-            // Insert TYPING placeholder so UI shows blinking cursor
+            // Insert TYPING placeholder so UI shows streaming content
             val typingId = "typing_${conversationId}_${currentSpeakerId}"
             app.database.messageDao().insert(
                 MessageEntity(
@@ -170,7 +183,11 @@ class AgentConversationWorker(
                     try {
                         app.ollamaRepository.streamChat(baseUrl, request).collect { chunk ->
                             val delta = chunk.message?.content ?: ""
-                            if (delta.isNotEmpty()) accumulated.append(delta)
+                            if (delta.isNotEmpty()) {
+                                accumulated.append(delta)
+                                // Stream tokens into the TYPING row so the UI shows them live
+                                app.database.messageDao().updateContent(typingId, accumulated.toString())
+                            }
                             chunk.message?.tool_calls?.let { calls ->
                                 if (calls.isNotEmpty()) toolCalls = calls
                             }
@@ -220,22 +237,34 @@ class AgentConversationWorker(
 
             if (turnAborted || responseText == null) {
                 Log.e(TAG, "Turn $turnCount produced no response, stopping")
+                // Write a visible system message so the user knows what happened
+                app.database.messageDao().insert(
+                    MessageEntity(
+                        id = UUID.randomUUID().toString(),
+                        conversationId = conversationId,
+                        role = "SYSTEM",
+                        content = "⚠ ${currentSpeaker.name} could not respond after $MAX_RETRIES_PER_TURN attempts. Tap send to resume.",
+                        timestamp = System.currentTimeMillis(),
+                        senderAgentId = null
+                    )
+                )
                 break
             }
 
-            // Persist the agent's response
+            // Persist the agent's response (strip the goal signal from displayed text)
+            val displayText = responseText.replace(GOAL_COMPLETE_SIGNAL, "").trim()
             app.database.messageDao().insert(
                 MessageEntity(
                     id = UUID.randomUUID().toString(),
                     conversationId = conversationId,
                     role = "ASSISTANT",
-                    content = responseText,
+                    content = displayText,
                     timestamp = System.currentTimeMillis(),
                     senderAgentId = currentSpeakerId
                 )
             )
             app.database.conversationDao().updateTimestamp(conversationId, System.currentTimeMillis())
-            Log.d(TAG, "Turn $turnCount persisted (${responseText.length} chars)")
+            Log.d(TAG, "Turn $turnCount persisted (${displayText.length} chars)")
 
             // Update title after first reply
             if (turnCount == 0) {
@@ -250,11 +279,36 @@ class AgentConversationWorker(
                 }
             }
 
+            // ── Dual-consent goal completion ──────────────────────────────────
             if (responseText.contains(GOAL_COMPLETE_SIGNAL)) {
-                goalReached = true
-                Log.d(TAG, "Goal marked complete by ${currentSpeaker.name}")
-                break
+                when {
+                    // No one has signaled yet — record this agent as the first
+                    firstGoalSignalerId == null -> {
+                        firstGoalSignalerId = currentSpeakerId
+                        Log.d(TAG, "${currentSpeaker.name} signaled goal complete — waiting for ${currentListener.name} to confirm")
+                        // Fall through to swap speakers and let the other agent respond
+                    }
+                    // The OTHER agent is now confirming — conversation ends
+                    firstGoalSignalerId != currentSpeakerId -> {
+                        goalReached = true
+                        Log.d(TAG, "Both agents confirmed goal complete")
+                    }
+                    // Same agent signaled twice (shouldn't happen normally) — clear and continue
+                    else -> {
+                        firstGoalSignalerId = null
+                        Log.d(TAG, "${currentSpeaker.name} signaled again; clearing and continuing")
+                    }
+                }
+            } else {
+                // Speaker did NOT signal → if the other agent had already signaled, reset
+                // (they've changed their mind by continuing to engage)
+                if (firstGoalSignalerId != null && firstGoalSignalerId != currentSpeakerId) {
+                    Log.d(TAG, "${currentSpeaker.name} did not confirm — clearing first-signal flag")
+                    firstGoalSignalerId = null
+                }
             }
+
+            if (goalReached) break
 
             val tmp = currentSpeakerId
             currentSpeakerId = currentListenerId

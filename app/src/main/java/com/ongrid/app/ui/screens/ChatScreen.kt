@@ -38,8 +38,10 @@ import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.Send
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.SmartToy
 import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -133,6 +135,8 @@ fun ChatScreen(
     var showProjectGroupingSheet by remember { mutableStateOf(false) }
     val projectGroupingSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var isCompressing by remember { mutableStateOf(false) }
+    var showOverflowMenu by remember { mutableStateOf(false) }
+    var showDeleteConfirmDialog by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     // Hoisted here so both the TopAppBar (agent handoff header) and LazyColumn bubbles can use it
     val activeAgentsForBubbles by viewModel.activeAgents.collectAsState()
@@ -260,8 +264,33 @@ fun ChatScreen(
                     IconButton(onClick = onOpenMcpServers) {
                         Icon(Icons.Default.Build, contentDescription = "MCP Tools")
                     }
-                    IconButton(onClick = { viewModel.clearMessages() }) {
-                        Icon(Icons.Default.Delete, contentDescription = "Clear chat")
+                    Box {
+                        IconButton(onClick = { showOverflowMenu = true }) {
+                            Icon(Icons.Default.MoreVert, contentDescription = "More options")
+                        }
+                        DropdownMenu(
+                            expanded = showOverflowMenu,
+                            onDismissRequest = { showOverflowMenu = false }
+                        ) {
+                            if (!uiState.isAgentHandoff) {
+                                DropdownMenuItem(
+                                    text = { Text("Clear messages") },
+                                    leadingIcon = { Icon(Icons.Default.Delete, contentDescription = null) },
+                                    onClick = {
+                                        showOverflowMenu = false
+                                        viewModel.clearMessages()
+                                    }
+                                )
+                            }
+                            DropdownMenuItem(
+                                text = { Text("Delete conversation", color = MaterialTheme.colorScheme.error) },
+                                leadingIcon = { Icon(Icons.Default.Delete, contentDescription = null, tint = MaterialTheme.colorScheme.error) },
+                                onClick = {
+                                    showOverflowMenu = false
+                                    showDeleteConfirmDialog = true
+                                }
+                            )
+                        }
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
@@ -636,30 +665,36 @@ fun ChatScreen(
                                 MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
+                    // For handoff conversations, the stop button cancels the background worker.
+                    // "active" means the worker has inserted a TYPING placeholder.
+                    val isHandoffActive = uiState.isAgentHandoff && messages.any { it.isStreaming }
+                    val showStop = uiState.isLoading || isHandoffActive
                     IconButton(
                         onClick = {
-                            if (uiState.isLoading) {
-                                viewModel.stopGeneration()
-                            } else if (inputText.isNotBlank()) {
-                                viewModel.sendMessage(inputText.trim())
-                                inputText = ""
+                            when {
+                                isHandoffActive -> viewModel.cancelHandoffConversation()
+                                uiState.isLoading -> viewModel.stopGeneration()
+                                inputText.isNotBlank() -> {
+                                    viewModel.sendMessage(inputText.trim())
+                                    inputText = ""
+                                }
                             }
                         },
-                        enabled = uiState.isLoading || inputText.isNotBlank(),
+                        enabled = showStop || inputText.isNotBlank(),
                         modifier = Modifier
                             .size(48.dp)
                             .clip(CircleShape)
                             .background(
-                                if (uiState.isLoading || inputText.isNotBlank())
+                                if (showStop || inputText.isNotBlank())
                                     MaterialTheme.colorScheme.primary
                                 else
                                     MaterialTheme.colorScheme.surfaceVariant
                             )
                     ) {
                         Icon(
-                            if (uiState.isLoading) Icons.Default.Stop else Icons.Default.Send,
-                            contentDescription = if (uiState.isLoading) "Stop" else "Send",
-                            tint = if (uiState.isLoading || inputText.isNotBlank())
+                            if (showStop) Icons.Default.Stop else Icons.Default.Send,
+                            contentDescription = if (showStop) "Stop" else "Send",
+                            tint = if (showStop || inputText.isNotBlank())
                                 Color.White
                             else
                                 MaterialTheme.colorScheme.onSurfaceVariant
@@ -669,6 +704,31 @@ fun ChatScreen(
                 }
             }
         }
+    }
+
+    // ── Delete conversation confirmation dialog ───────────────────────────────
+    if (showDeleteConfirmDialog) {
+        AlertDialog(
+            onDismissRequest = { showDeleteConfirmDialog = false },
+            title = { Text("Delete conversation?") },
+            text = { Text("This will permanently delete all messages in this conversation. This cannot be undone.") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showDeleteConfirmDialog = false
+                        viewModel.deleteConversation()
+                        onNavigateBack()
+                    }
+                ) {
+                    Text("Delete", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeleteConfirmDialog = false }) {
+                    Text("Cancel")
+                }
+            }
+        )
     }
 
     // ── Skill picker sheet ────────────────────────────────────────────────────
@@ -1035,6 +1095,29 @@ private fun MessageBubble(
     val isUser = message.role == MessageRole.USER
     val isTool = message.role == MessageRole.TOOL
     val isSkill = message.isSkill
+    val isSystem = message.role == MessageRole.SYSTEM && !isSkill
+
+    // System messages (e.g. worker abort notifications) are rendered as a centered status banner.
+    if (isSystem) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.Center
+        ) {
+            Surface(
+                shape = RoundedCornerShape(8.dp),
+                color = MaterialTheme.colorScheme.errorContainer,
+                modifier = Modifier.padding(vertical = 4.dp)
+            ) {
+                Text(
+                    text = message.content,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onErrorContainer,
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                )
+            }
+        }
+        return
+    }
 
     // Skill messages are rendered as a compact banner, not a full bubble.
     if (isSkill) {

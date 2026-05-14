@@ -199,6 +199,7 @@ fun ConversationListScreen(
                                 val agent2 = agents.firstOrNull { it.id == participantIds.getOrNull(1) }
                                 val color1 = if ((agent1?.color ?: 0) != 0) androidx.compose.ui.graphics.Color(agent1!!.color) else MaterialTheme.colorScheme.primary
                                 val color2 = if ((agent2?.color ?: 0) != 0) androidx.compose.ui.graphics.Color(agent2!!.color) else MaterialTheme.colorScheme.secondary
+                                SwipeToDeleteContainer(onDelete = { viewModel.deleteConversation(conversation.id) }) {
                                 ListItem(
                                     headlineContent = {
                                         Text(
@@ -243,6 +244,7 @@ fun ConversationListScreen(
                                     },
                                     modifier = Modifier.clickable { onOpenConversation(conversation.id) }
                                 )
+                                }
                             } else {
                                 val dotColor = MaterialTheme.colorScheme.outline
                                 ListItem(
