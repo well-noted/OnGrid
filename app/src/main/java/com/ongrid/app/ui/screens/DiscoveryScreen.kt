@@ -155,12 +155,13 @@ fun DiscoveryScreen(
                             value = manualHost,
                             onValueChange = { manualHost = it },
                             label = { Text("Host or IP") },
-                            placeholder = { Text("192.168.1.100") },
+                            placeholder = { Text("192.168.1.100 or 100.x.x.x:11434") },
                             singleLine = true,
                             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
                             keyboardActions = KeyboardActions(onDone = {
                                 if (manualHost.isNotBlank()) {
-                                    viewModel.addManualServer(manualHost.trim())
+                                    val (h, p) = parseHostPort(manualHost.trim())
+                                    viewModel.addManualServer(h, p)
                                     manualHost = ""
                                     showManualEntry = false
                                 }
@@ -169,7 +170,8 @@ fun DiscoveryScreen(
                         )
                         Button(onClick = {
                             if (manualHost.isNotBlank()) {
-                                viewModel.addManualServer(manualHost.trim())
+                                val (h, p) = parseHostPort(manualHost.trim())
+                                viewModel.addManualServer(h, p)
                                 manualHost = ""
                                 showManualEntry = false
                             }
@@ -200,6 +202,21 @@ fun DiscoveryScreen(
             }
         }
     }
+}
+
+/**
+ * Splits a user-entered string into (host, port), defaulting to 11434 if no port is given.
+ * Handles "192.168.1.100", "192.168.1.100:11434", and Tailscale addresses like "100.x.x.x:11434".
+ */
+private fun parseHostPort(input: String): Pair<String, Int> {
+    val colonIndex = input.lastIndexOf(':')
+    if (colonIndex > 0) {
+        val potentialPort = input.substring(colonIndex + 1).toIntOrNull()
+        if (potentialPort != null) {
+            return input.substring(0, colonIndex) to potentialPort
+        }
+    }
+    return input to 11434
 }
 
 @Composable
