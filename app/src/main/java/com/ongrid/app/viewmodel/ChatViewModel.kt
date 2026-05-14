@@ -196,6 +196,20 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     /** Called when the user reopens an existing conversation from the list. */
     fun resumeConversation(conversationId: String) {
+        // If a generation is in flight for a *different* conversation, stop it before switching.
+        // Without this, the active sendJob keeps consuming from the shared chatServiceChannel and
+        // writes ThinkingToken / Token events into the UI state that is now showing the new convo.
+        if (currentConversationId != conversationId) {
+            sendJob?.cancel()
+            sendJob = null
+            getApplication<Application>().stopService(
+                Intent(getApplication(), ChatForegroundService::class.java)
+            )
+            _uiState.value = _uiState.value.copy(
+                isLoading = false,
+                streamingThinkingContent = ""
+            )
+        }
         viewModelScope.launch {
             val alreadyActiveAndLoading =
                 currentConversationId == conversationId && _uiState.value.isLoading
