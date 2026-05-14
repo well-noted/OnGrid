@@ -252,6 +252,23 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             handoffObserverJob?.cancel()
             val isHandoff = entity.conversationType == "AGENT_HANDOFF"
             if (isHandoff) {
+                // Only clean up stale TYPING rows when the worker is NOT currently running.
+                // If the worker is active, the TYPING row belongs to it — don't touch it.
+                // If the worker has stopped (crash, cancel, completion), promote any partial
+                // content to ASSISTANT so it's preserved, and delete empty rows.
+                val workManager = androidx.work.WorkManager.getInstance(getApplication<Application>())
+                val workerRunning = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    workManager.getWorkInfosByTag("agent_convo_$conversationId")
+                        .get()
+                        .any {
+                            it.state == androidx.work.WorkInfo.State.RUNNING ||
+                            it.state == androidx.work.WorkInfo.State.ENQUEUED
+                        }
+                }
+                if (!workerRunning) {
+                    app.database.messageDao().promoteTypingWithContent(conversationId)
+                    app.database.messageDao().deleteEmptyTyping(conversationId)
+                }
                 handoffObserverJob = viewModelScope.launch {
                     // AGENT_HANDOFF conversations are driven entirely by the background worker;
                     // there is no streaming bubble to protect, so always apply DB updates.
@@ -875,8 +892,16 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         val convId = currentConversationId ?: return
         androidx.work.WorkManager.getInstance(getApplication())
             .cancelAllWorkByTag("agent_convo_$convId")
-        // Remove any lingering TYPING placeholder from messages
-        _messages.value = _messages.value.filter { !it.isStreaming }
+        // Promote any partial content to a real message so it's preserved in the conversation,
+        // then remove empty TYPING rows. Also update in-memory state immediately so the
+        // blinking cursor disappears without waiting for the Room observer to re-emit.
+        viewModelScope.launch {
+            app.database.messageDao().promoteTypingWithContent(convId)
+            app.database.messageDao().deleteEmptyTyping(convId)
+        }
+        _messages.value = _messages.value.map { msg ->
+            if (msg.isStreaming) msg.copy(isStreaming = false) else msg
+        }
     }
 
     /**

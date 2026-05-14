@@ -27,4 +27,18 @@ interface MessageDao {
     /** Update only the content of an existing row — used to stream tokens into the TYPING placeholder. */
     @Query("UPDATE messages SET content = :content WHERE id = :id")
     suspend fun updateContent(id: String, content: String)
+
+    /**
+     * Promote stale TYPING rows that have content into real ASSISTANT messages so the
+     * partial text is preserved for the user and the other agent to read.
+     */
+    @Query("UPDATE messages SET role = 'ASSISTANT' WHERE conversationId = :conversationId AND role = 'TYPING' AND length(content) > 0")
+    suspend fun promoteTypingWithContent(conversationId: String)
+
+    /**
+     * Delete TYPING rows that have no content — the worker was cancelled before generating
+     * anything, so there is nothing useful to preserve.
+     */
+    @Query("DELETE FROM messages WHERE conversationId = :conversationId AND role = 'TYPING' AND length(content) = 0")
+    suspend fun deleteEmptyTyping(conversationId: String)
 }

@@ -50,6 +50,12 @@ class AgentConversationWorker(
 
         Log.d(TAG, "Starting agent conversation $conversationId")
 
+        // Resolve stale TYPING rows left by a previous interrupted run.
+        // Non-empty rows are promoted to ASSISTANT so the partial content is preserved in context.
+        // Empty rows (nothing was generated) are simply removed.
+        app.database.messageDao().promoteTypingWithContent(conversationId)
+        app.database.messageDao().deleteEmptyTyping(conversationId)
+
         val conversation = app.database.conversationDao().getById(conversationId)
             ?: run { Log.e(TAG, "Conversation $conversationId not found"); return Result.failure() }
 
@@ -180,13 +186,18 @@ class AgentConversationWorker(
                     }
                     accumulated = StringBuilder()
                     toolCalls = emptyList()
+                    var lastDbWriteLength = 0
                     try {
                         app.ollamaRepository.streamChat(baseUrl, request).collect { chunk ->
                             val delta = chunk.message?.content ?: ""
                             if (delta.isNotEmpty()) {
                                 accumulated.append(delta)
-                                // Stream tokens into the TYPING row so the UI shows them live
-                                app.database.messageDao().updateContent(typingId, accumulated.toString())
+                                // Throttle DB writes: only push to the TYPING row every 15 chars.
+                                // This keeps the UI smooth without a Room invalidation per token.
+                                if (accumulated.length - lastDbWriteLength >= 15) {
+                                    app.database.messageDao().updateContent(typingId, accumulated.toString())
+                                    lastDbWriteLength = accumulated.length
+                                }
                             }
                             chunk.message?.tool_calls?.let { calls ->
                                 if (calls.isNotEmpty()) toolCalls = calls
