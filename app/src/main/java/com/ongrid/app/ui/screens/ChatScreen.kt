@@ -81,6 +81,7 @@ import androidx.compose.runtime.setValue
 import kotlinx.coroutines.launch
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.withStyle
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
@@ -1304,6 +1305,23 @@ private fun MessageBubble(
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
+    }
+
+    // Special rendering for the orchestrating indicator — no bubble, just a subtle label
+    if (message.isStreaming && message.content == "Orchestrating…") {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 8.dp, top = 0.dp, bottom = 4.dp),
+            horizontalArrangement = Arrangement.Start
+        ) {
+            Text(
+                text = "Orchestrating…",
+                style = MaterialTheme.typography.bodySmall.copy(fontStyle = FontStyle.Italic),
+                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+            )
+        }
+        return
     }
 
     Row(
