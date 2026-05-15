@@ -253,6 +253,9 @@ class RoomConversationWorker(
             var accumulatedThinking = StringBuilder()
             var toolDepth = 0
             var turnAborted = false
+            // If the agent produces no text after tool results, we send one nudge so
+            // the agent has a chance to actually respond before yielding to the orchestrator.
+            var nudgeSent = false
 
             while (toolDepth <= MAX_TOOL_DEPTH) {
                 val request = OllamaChatRequest(
@@ -326,8 +329,21 @@ class RoomConversationWorker(
                 }
 
                 if (toolCalls.isEmpty()) {
-                    responseText = accumulated.toString().trim()
-                    break
+                    val trimmed = accumulated.toString().trim()
+                    // If the model produced no text after receiving tool results, nudge it
+                    // once so it actually replies before we yield to the orchestrator.
+                    if (trimmed.isBlank() && toolDepth > 0 && !nudgeSent) {
+                        nudgeSent = true
+                        Log.d(TAG, "Turn $turnCount: blank response after tool results — nudging ${currentSpeaker.name}")
+                        currentHistory += OllamaChatMessage(
+                            role = "user",
+                            content = "[system]: Tool results received. Please now provide your response to the conversation."
+                        )
+                        // Don't break — re-enter the inner loop to get the agent's text reply.
+                    } else {
+                        responseText = trimmed
+                        break
+                    }
                 }
 
                 // Execute tool calls
