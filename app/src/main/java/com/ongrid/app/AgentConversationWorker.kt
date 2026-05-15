@@ -71,6 +71,7 @@ class AgentConversationWorker(
         val executor = AgentToolExecutor(app)
         val tools = executor.buildTools().takeIf { it.isNotEmpty() }
 
+        val toolNames: List<String> = tools?.map { it.function.name } ?: emptyList()
         Log.d(TAG, "Agents: ${agent1.name} <-> ${agent2.name}, model=$modelName, tools=${tools?.size ?: 0}")
 
         DreamNotificationHelper.notify(
@@ -171,6 +172,7 @@ class AgentConversationWorker(
             var accumulatedThinking = StringBuilder()  // collected across the whole turn
             var toolDepth = 0
             var turnAborted = false
+            var nudgeSent = false
 
             while (toolDepth <= MAX_TOOL_DEPTH) {
                 val request = OllamaChatRequest(
@@ -237,10 +239,50 @@ class AgentConversationWorker(
                     turnAborted = true; break
                 }
 
-                // No tool calls → this is the final text response
+                // No tool calls — decide whether this is truly the final response
                 if (toolCalls.isEmpty()) {
-                    responseText = accumulated.toString().trim()
-                    break
+                    val trimmed = accumulated.toString().trim()
+                    when {
+                        // Case A: blank after tool execution — nudge agent to reply
+                        trimmed.isBlank() && toolDepth > 0 && !nudgeSent -> {
+                            nudgeSent = true
+                            Log.d(TAG, "Turn $turnCount: blank after tool results — nudging $currentSpeakerId")
+                            currentHistory += OllamaChatMessage(
+                                role = "user",
+                                content = "[system]: Tool results received. Please now provide your response to the conversation."
+                            )
+                        }
+                        // Case B: agent verbally described tool intent without calling it
+                        trimmed.isNotBlank() && !nudgeSent &&
+                                toolNames.any { trimmed.contains(it, ignoreCase = true) } -> {
+                            nudgeSent = true
+                            Log.d(TAG, "Turn $turnCount: agent described tool intent in text — prompting function call")
+                            val intentThinking = accumulatedThinking.toString().trim()
+                            app.database.messageDao().insert(
+                                MessageEntity(
+                                    id = UUID.randomUUID().toString(),
+                                    conversationId = conversationId,
+                                    role = "ASSISTANT",
+                                    content = trimmed,
+                                    thinkingContent = intentThinking,
+                                    timestamp = System.currentTimeMillis(),
+                                    senderAgentId = currentSpeakerId
+                                )
+                            )
+                            accumulatedThinking = StringBuilder()
+                            currentHistory += OllamaChatMessage(role = "assistant", content = trimmed)
+                            currentHistory += OllamaChatMessage(
+                                role = "user",
+                                content = "[system]: Please invoke that tool using the structured function call interface now."
+                            )
+                            app.database.messageDao().updateContent(typingId, "")
+                            app.database.messageDao().updateThinkingContent(typingId, "")
+                        }
+                        else -> {
+                            responseText = trimmed
+                            break
+                        }
+                    }
                 }
 
                 // Has tool calls → execute them, persist results to DB, and loop back.

@@ -97,6 +97,8 @@ class RoomConversationWorker(
 
         val agentNames = agents.joinToString(", ") { it.name }
         Log.d(TAG, "Agents: $agentNames | Orchestrator: ${orchestratorAgent?.name ?: "round-robin"}")
+        // Pre-compute the list of callable tool names for intent-detection heuristic below.
+        val toolNames: List<String> = tools?.map { it.function.name } ?: emptyList()
 
         RoomNotificationHelper.notify(
             applicationContext,
@@ -330,19 +332,53 @@ class RoomConversationWorker(
 
                 if (toolCalls.isEmpty()) {
                     val trimmed = accumulated.toString().trim()
-                    // If the model produced no text after receiving tool results, nudge it
-                    // once so it actually replies before we yield to the orchestrator.
-                    if (trimmed.isBlank() && toolDepth > 0 && !nudgeSent) {
-                        nudgeSent = true
-                        Log.d(TAG, "Turn $turnCount: blank response after tool results — nudging ${currentSpeaker.name}")
-                        currentHistory += OllamaChatMessage(
-                            role = "user",
-                            content = "[system]: Tool results received. Please now provide your response to the conversation."
-                        )
-                        // Don't break — re-enter the inner loop to get the agent's text reply.
-                    } else {
-                        responseText = trimmed
-                        break
+                    when {
+                        // Case A: blank response after tool execution — agent needs to reply
+                        trimmed.isBlank() && toolDepth > 0 && !nudgeSent -> {
+                            nudgeSent = true
+                            Log.d(TAG, "Turn $turnCount: blank after tool results — nudging ${currentSpeaker.name}")
+                            currentHistory += OllamaChatMessage(
+                                role = "user",
+                                content = "[system]: Tool results received. Please now provide your response to the conversation."
+                            )
+                            // Don't break — re-enter the loop to get the text reply.
+                        }
+                        // Case B: agent verbally announced tool use but didn't call it —
+                        // the response text mentions a known tool name but no tool_calls
+                        // were emitted. Persist the intent text so it's visible in the
+                        // timeline, then nudge the model to actually invoke the function.
+                        trimmed.isNotBlank() && !nudgeSent &&
+                                toolNames.any { trimmed.contains(it, ignoreCase = true) } -> {
+                            nudgeSent = true
+                            Log.d(TAG, "Turn $turnCount: agent described tool intent in text — prompting function call for ${currentSpeaker.name}")
+                            // Save the planning text as a settled bubble so the user can see it.
+                            val intentThinking = accumulatedThinking.toString().trim()
+                            app.database.messageDao().insert(
+                                MessageEntity(
+                                    id = UUID.randomUUID().toString(),
+                                    conversationId = conversationId,
+                                    role = "ASSISTANT",
+                                    content = trimmed,
+                                    thinkingContent = intentThinking,
+                                    timestamp = System.currentTimeMillis(),
+                                    senderAgentId = currentSpeaker.id
+                                )
+                            )
+                            accumulatedThinking = StringBuilder()
+                            // Feed the intent text back as context and redirect to a proper call.
+                            currentHistory += OllamaChatMessage(role = "assistant", content = trimmed)
+                            currentHistory += OllamaChatMessage(
+                                role = "user",
+                                content = "[system]: Please invoke that tool using the structured function call interface now."
+                            )
+                            // Clear the TYPING bubble so the next streamed response starts fresh.
+                            app.database.messageDao().updateContent(typingId, "")
+                            app.database.messageDao().updateThinkingContent(typingId, "")
+                        }
+                        else -> {
+                            responseText = trimmed
+                            break
+                        }
                     }
                 }
 
