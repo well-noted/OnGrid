@@ -162,6 +162,23 @@ class RoomViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    // ── Session management ────────────────────────────────────────────────────
+
+    /**
+     * Delete a single session (conversation + all its messages).
+     * Cancels the room worker first in case the session is still running.
+     */
+    fun deleteSession(conversationId: String) {
+        viewModelScope.launch {
+            // Cancel any running worker for this session
+            androidx.work.WorkManager.getInstance(app)
+                .cancelAllWorkByTag("room_convo_$conversationId")
+            // Delete messages then the conversation record
+            app.database.messageDao().deleteByConversation(conversationId)
+            app.database.conversationDao().deleteById(conversationId)
+        }
+    }
+
     // ── Memories ──────────────────────────────────────────────────────────────
 
     fun addMemory(roomId: String, content: String) {

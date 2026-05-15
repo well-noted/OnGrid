@@ -46,15 +46,16 @@ class RoomConversationWorker(
     private val app get() = applicationContext as OnGridApplication
 
     override suspend fun getForegroundInfo(): ForegroundInfo {
-        DreamNotificationHelper.ensureChannel(applicationContext)
-        val notif = NotificationCompat.Builder(applicationContext, DreamNotificationHelper.CHANNEL_ID)
-            .setContentTitle("Agent Room")
-            .setContentText("Agents are collaborating")
+        val conversationId = inputData.getString(KEY_CONVERSATION_ID) ?: "room_worker"
+        RoomNotificationHelper.ensureChannel(applicationContext)
+        val notif = NotificationCompat.Builder(applicationContext, RoomNotificationHelper.CHANNEL_ID)
+            .setContentTitle("🤝 Room active")
+            .setContentText("Agents are collaborating…")
             .setSmallIcon(R.mipmap.ic_launcher)
             .setOngoing(true)
             .setSilent(true)
             .build()
-        return ForegroundInfo(FOREGROUND_NOTIFICATION_ID, notif)
+        return ForegroundInfo(RoomNotificationHelper.notificationId(conversationId), notif)
     }
 
     override suspend fun doWork(): Result {
@@ -97,11 +98,12 @@ class RoomConversationWorker(
         val agentNames = agents.joinToString(", ") { it.name }
         Log.d(TAG, "Agents: $agentNames | Orchestrator: ${orchestratorAgent?.name ?: "round-robin"}")
 
-        DreamNotificationHelper.notify(
+        RoomNotificationHelper.notify(
             applicationContext,
-            taskLabel = room.name,
-            agentName = agentNames,
-            serverSubtext = goal.take(60)
+            conversationId = conversationId,
+            roomName = room.name,
+            participantNames = agentNames,
+            goalSnippet = goal.take(60)
         )
 
         // All-consent goal tracking: maps agentId → has signaled
@@ -111,18 +113,50 @@ class RoomConversationWorker(
         var speakerIndex = 0
 
         while (turnCount < MAX_TURNS && !goalReached) {
+            // Fetch messages once per turn — reused for history, orchestrator, and starvation guard
+            val allMessages = app.database.messageDao().getByConversation(conversationId)
+            val assistantMessages = allMessages.filter { it.role == "ASSISTANT" && it.senderAgentId != null }
+            val turnCountsMap: Map<String, Int> = agents.associate { agent ->
+                agent.id to assistantMessages.count { it.senderAgentId == agent.id }
+            }
+
             // ── Select next speaker ──────────────────────────────────────────────
             val currentSpeaker: AgentEntity = if (orchestratorAgent != null) {
+                // Show a brief "Orchestrating…" indicator while the LLM picks the next speaker.
+                // Using a distinct id so it doesn't collide with the speaker's own TYPING row.
+                val orchestratingId = "typing_${conversationId}_orch"
+                app.database.messageDao().insert(
+                    MessageEntity(
+                        id = orchestratingId,
+                        conversationId = conversationId,
+                        role = "TYPING",
+                        content = "Orchestrating…",
+                        timestamp = System.currentTimeMillis(),
+                        senderAgentId = orchestratorAgent.id
+                    )
+                )
                 val chosen = pickNextSpeaker(
                     orchestrator = orchestratorAgent,
                     agents = agents,
-                    conversationId = conversationId,
+                    allMessages = allMessages,
+                    turnCounts = turnCountsMap,
                     baseUrl = baseUrl,
                     modelName = modelName,
                     goal = goal,
                     room = room
                 )
-                chosen ?: agents[speakerIndex % agents.size]
+                app.database.messageDao().deleteById(orchestratingId)
+                // Starvation guard: force-pick the most underrepresented agent if any agent is
+                // more than 0.5 turns below the current average. This ensures all N agents
+                // participate even if the orchestrator repeatedly picks the same subset.
+                val avgTurns = turnCountsMap.values.average().takeIf { it.isFinite() } ?: 0.0
+                val starved = agents
+                    .filter { (turnCountsMap[it.id] ?: 0) < avgTurns - 0.5 }
+                    .minByOrNull { turnCountsMap[it.id] ?: 0 }
+                if (starved != null) {
+                    Log.d(TAG, "Starvation guard: forcing ${starved.name} (turns=${turnCountsMap[starved.id]}, avg=${"%.1f".format(avgTurns)})")
+                }
+                starved ?: chosen ?: agents[speakerIndex % agents.size]
             } else {
                 agents[speakerIndex % agents.size]
             }
@@ -173,11 +207,10 @@ class RoomConversationWorker(
                 }
             }
 
-            // Build history
-            val messages = app.database.messageDao().getByConversation(conversationId)
+            // Build history (reuses allMessages fetched at the top of this turn)
             val history = mutableListOf<OllamaChatMessage>()
             history += OllamaChatMessage(role = "system", content = systemContent)
-            for (msg in messages) {
+            for (msg in allMessages) {
                 when {
                     msg.role == "TYPING" -> continue
                     msg.role == "TOOL" -> {
@@ -269,6 +302,15 @@ class RoomConversationWorker(
                                 if (calls.isNotEmpty()) toolCalls = calls
                             }
                         }
+                        // Final flush — write anything below the throttle threshold
+                        if (accumulated.length > lastContentWriteLength) {
+                            app.database.messageDao().updateContent(typingId, accumulated.toString())
+                            lastContentWriteLength = accumulated.length
+                        }
+                        if (accumulatedThinking.length > lastThinkingWriteLength) {
+                            app.database.messageDao().updateThinkingContent(typingId, accumulatedThinking.toString())
+                            lastThinkingWriteLength = accumulatedThinking.length
+                        }
                         if (accumulated.isNotBlank() || toolCalls.isNotEmpty()) {
                             ollamaOk = true; break
                         }
@@ -338,8 +380,23 @@ class RoomConversationWorker(
             }
 
             // Persist agent response
+            val signalledComplete = responseText.contains(GOAL_COMPLETE_SIGNAL)
             val displayText = responseText.replace(GOAL_COMPLETE_SIGNAL, "").trim()
+                .ifBlank {
+                    // Agent sent only the goal signal with no real content — treat as an
+                    // implicit agreement rather than a substantive turn. Show a minimal note
+                    // and don't count it as a valid goal signal (forces agents to say something).
+                    Log.w(TAG, "Turn $turnCount: ${currentSpeaker.name} sent empty content (only signal or blank)")
+                    null
+                }
             val thinkingText = accumulatedThinking.toString().trim()
+            if (displayText == null) {
+                // Skip inserting an invisible empty bubble; advance to next turn
+                accumulatedThinking = StringBuilder()
+                speakerIndex = (speakerIndex + 1) % agents.size
+                turnCount++
+                continue
+            }
             app.database.messageDao().insert(
                 MessageEntity(
                     id = UUID.randomUUID().toString(),
@@ -387,17 +444,7 @@ class RoomConversationWorker(
             turnCount++
         }
 
-        val statusLabel = when {
-            goalReached -> "Goal complete"
-            turnCount >= MAX_TURNS -> "Max turns reached"
-            else -> "Conversation ended"
-        }
-        DreamNotificationHelper.notify(
-            applicationContext,
-            taskLabel = statusLabel,
-            agentName = agentNames,
-            serverSubtext = goal.take(60)
-        )
+        RoomNotificationHelper.dismiss(applicationContext, conversationId)
 
         Log.d(TAG, "Finished. Turns=$turnCount, goalReached=$goalReached")
         return Result.success()
@@ -406,18 +453,24 @@ class RoomConversationWorker(
     /**
      * Asks the orchestrator agent to pick the next speaker. Returns the resolved [AgentEntity]
      * or null if the response can't be parsed to a valid agent name.
+     *
+     * [allMessages] and [turnCounts] are pre-computed by the caller to avoid an extra DB hit.
      */
     private suspend fun pickNextSpeaker(
         orchestrator: AgentEntity,
         agents: List<AgentEntity>,
-        conversationId: String,
+        allMessages: List<com.ongrid.app.data.local.MessageEntity>,
+        turnCounts: Map<String, Int>,
         baseUrl: String,
         modelName: String,
         goal: String,
         room: com.ongrid.app.data.local.AgentRoomEntity
     ): AgentEntity? {
         val agentList = agents.joinToString(", ") { it.name }
-        val recentMessages = app.database.messageDao().getByConversation(conversationId)
+        val turnSummary = agents.joinToString(", ") { "${it.name}: ${turnCounts[it.id] ?: 0}" }
+        val unspoken = agents.filter { (turnCounts[it.id] ?: 0) == 0 }.map { it.name }
+
+        val recentMessages = allMessages
             .filter { it.role == "ASSISTANT" }
             .takeLast(6)
             .joinToString("\n") { msg ->
@@ -429,6 +482,12 @@ class RoomConversationWorker(
             append("You are ${orchestrator.name}, the conversation orchestrator for the room \"${room.name}\".\n")
             append("Participants: $agentList\n")
             append("Goal: $goal\n\n")
+            append("Turns taken so far — $turnSummary\n")
+            append("Ensure all participants get a roughly equal number of turns. Prefer agents who have spoken fewer times.\n")
+            if (unspoken.isNotEmpty()) {
+                append("Has not yet spoken: ${unspoken.joinToString(", ")}.\n")
+            }
+            append("\n")
             if (recentMessages.isNotEmpty()) {
                 append("Recent conversation:\n$recentMessages\n\n")
             }
@@ -470,7 +529,6 @@ class RoomConversationWorker(
     companion object {
         const val KEY_ROOM_ID = "roomId"
         const val KEY_CONVERSATION_ID = "conversationId"
-        private const val FOREGROUND_NOTIFICATION_ID = 1005
 
         fun enqueue(context: Context, roomId: String, conversationId: String) {
             val request = OneTimeWorkRequestBuilder<RoomConversationWorker>()

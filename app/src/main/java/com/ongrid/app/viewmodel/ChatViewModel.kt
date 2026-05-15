@@ -432,6 +432,34 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         // start a normal streaming response — just persist it and let the worker handle it.
         if (_uiState.value.isAgentHandoff) {
             val convId = currentConversationId ?: return
+
+            // ── Room conversations ────────────────────────────────────────────
+            // Rooms are autonomous: the RoomConversationWorker drives all turns.
+            // Just save the user message so the worker sees it in history, and re-enqueue
+            // the worker if it has already stopped (user is injecting a late message).
+            if (_uiState.value.isRoomConversation) {
+                viewModelScope.launch {
+                    repo.saveMessage(convId, ChatMessage(role = MessageRole.USER, content = text))
+                    repo.touchConversation(convId)
+                    val workManager = androidx.work.WorkManager.getInstance(getApplication<Application>())
+                    val alreadyRunning = withContext(Dispatchers.IO) {
+                        workManager.getWorkInfosByTag("room_convo_$convId").get().any {
+                            it.state == androidx.work.WorkInfo.State.RUNNING ||
+                            it.state == androidx.work.WorkInfo.State.ENQUEUED
+                        }
+                    }
+                    if (!alreadyRunning) {
+                        val conv = app.database.conversationDao().getById(convId)
+                        val roomId = conv?.roomId
+                        if (roomId != null) {
+                            com.ongrid.app.RoomConversationWorker.enqueue(getApplication(), roomId, convId)
+                        }
+                    }
+                }
+                return
+            }
+
+            // ── 2-agent handoff conversations ─────────────────────────────────
             val participantIds = _uiState.value.handoffParticipantIds
             if (participantIds.size < 2) return
             val agent1Id = participantIds[0]
@@ -939,8 +967,13 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     fun cancelHandoffConversation() {
         val convId = currentConversationId ?: return
-        androidx.work.WorkManager.getInstance(getApplication())
-            .cancelAllWorkByTag("agent_convo_$convId")
+        val wm = androidx.work.WorkManager.getInstance(getApplication())
+        // Cancel the appropriate worker depending on conversation type
+        if (_uiState.value.isRoomConversation) {
+            wm.cancelAllWorkByTag("room_convo_$convId")
+        } else {
+            wm.cancelAllWorkByTag("agent_convo_$convId")
+        }
         // Promote any partial content to a real message so it's preserved in the conversation,
         // then remove empty TYPING rows. Also update in-memory state immediately so the
         // blinking cursor disappears without waiting for the Room observer to re-emit.

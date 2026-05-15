@@ -95,6 +95,7 @@ fun RoomDetailScreen(
     var showMemoryInput by remember { mutableStateOf(false) }
     var newMemoryText by remember { mutableStateOf("") }
     var overflowExpanded by remember { mutableStateOf(false) }
+    var sessionToDelete by remember { mutableStateOf<ConversationEntity?>(null) }
 
     val r = room ?: return
 
@@ -404,7 +405,8 @@ fun RoomDetailScreen(
                     RoomSessionItem(
                         conversation = conv,
                         roomColor = roomColor,
-                        onClick = { onOpenConversation(conv.id) }
+                        onClick = { onOpenConversation(conv.id) },
+                        onDeleteRequest = { sessionToDelete = conv }
                     )
                 }
             }
@@ -463,6 +465,23 @@ fun RoomDetailScreen(
                 ) { Text("Delete", color = MaterialTheme.colorScheme.error) }
             },
             dismissButton = { TextButton(onClick = { showDeleteDialog = false }) { Text("Cancel") } }
+        )
+    }
+
+    sessionToDelete?.let { session ->
+        AlertDialog(
+            onDismissRequest = { sessionToDelete = null },
+            title = { Text("Delete session?") },
+            text = { Text("\"${session.title}\" and all its messages will be permanently deleted.") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        viewModel.deleteSession(session.id)
+                        sessionToDelete = null
+                    }
+                ) { Text("Delete", color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = { TextButton(onClick = { sessionToDelete = null }) { Text("Cancel") } }
         )
     }
 
@@ -544,7 +563,8 @@ private fun RoomMemoryItem(
 private fun RoomSessionItem(
     conversation: ConversationEntity,
     roomColor: Color,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    onDeleteRequest: () -> Unit
 ) {
     Card(
         modifier = Modifier
@@ -557,7 +577,7 @@ private fun RoomSessionItem(
         shape = RoundedCornerShape(10.dp)
     ) {
         Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp),
+            modifier = Modifier.fillMaxWidth().padding(start = 14.dp, end = 4.dp, top = 6.dp, bottom = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {
@@ -577,6 +597,14 @@ private fun RoomSessionItem(
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
+            IconButton(onClick = onDeleteRequest, modifier = Modifier.size(36.dp)) {
+                Icon(
+                    Icons.Default.Delete,
+                    contentDescription = "Delete session",
+                    modifier = Modifier.size(16.dp),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+                )
+            }
         }
     }
 }
