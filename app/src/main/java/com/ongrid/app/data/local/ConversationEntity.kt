@@ -36,5 +36,7 @@ data class ConversationEntity(
     /** JSON list of agent IDs participating in an AGENT_HANDOFF conversation. */
     val participantAgentIds: String = "[]",
     /** The goal or task the agents are collaborating to complete. */
-    val goal: String = ""
+    val goal: String = "",
+    /** If this conversation was spawned by an [AgentRoomEntity], its ID. Null otherwise. */
+    val roomId: String? = null
 )

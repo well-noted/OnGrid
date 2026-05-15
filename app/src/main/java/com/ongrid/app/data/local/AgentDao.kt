@@ -83,4 +83,7 @@ interface AgentDao {
 
     @Query("UPDATE agents SET isRecentContextEnabled = :enabled WHERE id = :id")
     suspend fun updateRecentContextEnabled(id: String, enabled: Boolean)
+
+    @Query("UPDATE agents SET defaultThinkingEnabled = :enabled WHERE id = :id")
+    suspend fun updateDefaultThinkingEnabled(id: String, enabled: Boolean)
 }

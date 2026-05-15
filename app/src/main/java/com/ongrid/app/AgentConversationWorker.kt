@@ -195,11 +195,19 @@ class AgentConversationWorker(
                     accumulated = StringBuilder()
                     toolCalls = emptyList()
                     var lastDbWriteLength = 0
+                    var lastThinkingWriteLength = 0
                     try {
                         app.ollamaRepository.streamChat(baseUrl, request).collect { chunk ->
                             // Collect reasoning tokens (thinking-capable models only)
                             val thinkingDelta = chunk.message?.thinking ?: ""
-                            if (thinkingDelta.isNotEmpty()) accumulatedThinking.append(thinkingDelta)
+                            if (thinkingDelta.isNotEmpty()) {
+                                accumulatedThinking.append(thinkingDelta)
+                                // Stream thinking into TYPING row so the UI shows it live
+                                if (accumulatedThinking.length - lastThinkingWriteLength >= 15) {
+                                    app.database.messageDao().updateThinkingContent(typingId, accumulatedThinking.toString())
+                                    lastThinkingWriteLength = accumulatedThinking.length
+                                }
+                            }
 
                             val delta = chunk.message?.content ?: ""
                             if (delta.isNotEmpty()) {

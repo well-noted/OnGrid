@@ -53,6 +53,8 @@ import com.ongrid.app.ui.screens.DiscoveryScreen
 import com.ongrid.app.ui.screens.McpServerScreen
 import com.ongrid.app.ui.screens.ProjectDetailScreen
 import com.ongrid.app.ui.screens.ProjectListScreen
+import com.ongrid.app.ui.screens.RoomDetailScreen
+import com.ongrid.app.ui.screens.RoomListScreen
 import com.ongrid.app.ui.screens.SettingsScreen
 import com.ongrid.app.ui.screens.ShareTargetScreen
 import com.ongrid.app.viewmodel.AgentViewModel
@@ -60,6 +62,7 @@ import com.ongrid.app.viewmodel.ChatViewModel
 import com.ongrid.app.viewmodel.ConversationListViewModel
 import com.ongrid.app.viewmodel.DiscoveryViewModel
 import com.ongrid.app.viewmodel.McpViewModel
+import com.ongrid.app.viewmodel.RoomViewModel
 import com.ongrid.app.viewmodel.ServerSetupState
 import kotlinx.coroutines.launch
 
@@ -74,6 +77,8 @@ object Routes {
     const val PROJECT_DETAIL = "project/{projectId}"
     const val AGENT_DETAIL = "agent/{agentId}"
     const val ALL_AGENTS = "all_agents"
+    const val ROOMS = "rooms"
+    const val ROOM_DETAIL = "room/{roomId}"
 
     fun discoveryRoute(autoScan: Boolean = false) = "discovery?autoScan=$autoScan"
     fun chatNewRoute(serverHost: String, serverPort: Int, modelName: String) =
@@ -81,6 +86,7 @@ object Routes {
     fun chatExistingRoute(conversationId: String) = "chat/existing/$conversationId"
     fun projectDetailRoute(projectId: String) = "project/$projectId"
     fun agentDetailRoute(agentId: String) = "agent/$agentId"
+    fun roomDetailRoute(roomId: String) = "room/$roomId"
 }
 
 @Composable
@@ -90,6 +96,7 @@ fun AppNavigation() {
     val mcpViewModel: McpViewModel = viewModel()
     val conversationListViewModel: ConversationListViewModel = viewModel()
     val agentViewModel: AgentViewModel = viewModel()
+    val roomViewModel: RoomViewModel = viewModel()
 
     // Share target handling
     val context = LocalContext.current
@@ -193,9 +200,11 @@ fun AppNavigation() {
                     }
                 }
                 is ServerSetupState.Ready -> {
+                    val lastUsed = (serverSetupState as ServerSetupState.Ready).lastUsed
                     MainShell(
                         conversationListViewModel = conversationListViewModel,
                         agentViewModel = agentViewModel,
+                        roomViewModel = roomViewModel,
                         settingsRepository = app.settingsRepository,
                         onOpenConversation = { conversationId ->
                             chatViewModel.resumeConversation(conversationId)
@@ -214,7 +223,23 @@ fun AppNavigation() {
                         },
                         onOpenAgent = { agentId ->
                             navController.navigate(Routes.agentDetailRoute(agentId))
-                        }
+                        },
+                        onCreateAgent = {
+                            agentViewModel.createAgent(
+                                name = "New Agent",
+                                role = "",
+                                color = 0xFF1A73E8.toInt(),
+                                onCreated = { agent ->
+                                    navController.navigate(Routes.agentDetailRoute(agent.id))
+                                }
+                            )
+                        },
+                        onOpenRooms = {
+                            navController.navigate(Routes.ROOMS)
+                        },
+                        defaultServerHost = lastUsed.serverHost ?: "",
+                        defaultServerPort = lastUsed.serverPort,
+                        defaultModelName = lastUsed.modelName ?: ""
                     )
                 }
             }
@@ -383,6 +408,35 @@ fun AppNavigation() {
                 }
             )
         }
+
+        composable(Routes.ROOMS) {
+            val serverSetupState by conversationListViewModel.serverSetupState.collectAsState()
+            val lastUsed = (serverSetupState as? ServerSetupState.Ready)?.lastUsed
+            RoomListScreen(
+                viewModel = roomViewModel,
+                onNavigateBack = { navController.popBackStack() },
+                onOpenRoom = { roomId -> navController.navigate(Routes.roomDetailRoute(roomId)) },
+                defaultServerHost = lastUsed?.serverHost ?: "",
+                defaultServerPort = lastUsed?.serverPort ?: 11434,
+                defaultModelName = lastUsed?.modelName ?: ""
+            )
+        }
+
+        composable(
+            route = Routes.ROOM_DETAIL,
+            arguments = listOf(navArgument("roomId") { type = NavType.StringType })
+        ) { backStack ->
+            val roomId = backStack.arguments?.getString("roomId") ?: return@composable
+            RoomDetailScreen(
+                roomId = roomId,
+                viewModel = roomViewModel,
+                onNavigateBack = { navController.popBackStack() },
+                onOpenConversation = { conversationId ->
+                    chatViewModel.resumeConversation(conversationId)
+                    navController.navigate(Routes.chatExistingRoute(conversationId))
+                }
+            )
+        }
     }
 }
 
@@ -390,12 +444,18 @@ fun AppNavigation() {
 private fun MainShell(
     conversationListViewModel: ConversationListViewModel,
     agentViewModel: AgentViewModel,
+    roomViewModel: RoomViewModel,
     settingsRepository: SettingsRepository,
     onOpenConversation: (conversationId: String) -> Unit,
     onNewChat: (server: com.ongrid.app.data.model.OllamaServer, modelName: String) -> Unit,
     onOpenSettings: () -> Unit,
     onOpenProject: (projectId: String) -> Unit,
-    onOpenAgent: (agentId: String) -> Unit
+    onOpenAgent: (agentId: String) -> Unit,
+    onCreateAgent: () -> Unit,
+    onOpenRooms: () -> Unit,
+    defaultServerHost: String = "",
+    defaultServerPort: Int = 11434,
+    defaultModelName: String = ""
 ) {
     var selectedTab by rememberSaveable { mutableStateOf("chat") }
     val coroutineScope = rememberCoroutineScope()
@@ -466,8 +526,10 @@ private fun MainShell(
                 "agents" -> AgentListScreen(
                     viewModel = agentViewModel,
                     navigateToAgent = onOpenAgent,
-                    onCreateAgent = {},
-                    onOpenSettings = onOpenSettings
+                    onCreateAgent = onCreateAgent,
+                    onOpenSettings = onOpenSettings,
+                    onOpenRooms = onOpenRooms,
+                    roomViewModel = roomViewModel
                 )
                 else -> ConversationListScreen(
                     viewModel = conversationListViewModel,

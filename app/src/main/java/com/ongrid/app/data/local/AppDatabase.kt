@@ -6,8 +6,8 @@ import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
 @Database(
-    entities = [ProjectEntity::class, ConversationEntity::class, MessageEntity::class, SavedServerEntity::class, SkillEntity::class, ProjectMemoryEntity::class, AgentEntity::class, AgentMemoryEntity::class, DreamLogEntity::class, DreamScheduleEntity::class, ConversationEmbeddingEntity::class],
-    version = 14,
+    entities = [ProjectEntity::class, ConversationEntity::class, MessageEntity::class, SavedServerEntity::class, SkillEntity::class, ProjectMemoryEntity::class, AgentEntity::class, AgentMemoryEntity::class, DreamLogEntity::class, DreamScheduleEntity::class, ConversationEmbeddingEntity::class, AgentRoomEntity::class, RoomMemoryEntity::class],
+    version = 16,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -22,6 +22,58 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun dreamLogDao(): DreamLogDao
     abstract fun dreamScheduleDao(): DreamScheduleDao
     abstract fun conversationEmbeddingDao(): ConversationEmbeddingDao
+    abstract fun agentRoomDao(): AgentRoomDao
+    abstract fun roomMemoryDao(): RoomMemoryDao
+}
+
+val MIGRATION_15_16 = object : Migration(15, 16) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE agents ADD COLUMN defaultThinkingEnabled INTEGER NOT NULL DEFAULT 0")
+    }
+}
+
+val MIGRATION_14_15 = object : Migration(14, 15) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        // Add roomId to conversations
+        db.execSQL("ALTER TABLE conversations ADD COLUMN roomId TEXT")
+
+        // Create agent_rooms table — no DEFAULT clauses; Kotlin defaults are not SQL defaults
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS agent_rooms (
+                id TEXT PRIMARY KEY NOT NULL,
+                name TEXT NOT NULL,
+                systemPrompt TEXT NOT NULL,
+                agentIds TEXT NOT NULL,
+                color INTEGER NOT NULL,
+                serverHost TEXT NOT NULL,
+                serverPort INTEGER NOT NULL,
+                modelName TEXT NOT NULL,
+                scheduleEnabled INTEGER NOT NULL,
+                scheduleHour INTEGER NOT NULL,
+                scheduleMinute INTEGER NOT NULL,
+                goalTemplate TEXT NOT NULL,
+                orchestratorAgentId TEXT,
+                createdAt INTEGER NOT NULL,
+                updatedAt INTEGER NOT NULL
+            )
+            """.trimIndent()
+        )
+
+        // Create room_memories table — no DEFAULT clauses, no explicit index
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS room_memories (
+                id TEXT PRIMARY KEY NOT NULL,
+                roomId TEXT NOT NULL,
+                content TEXT NOT NULL,
+                isPinned INTEGER NOT NULL,
+                sourceConversationId TEXT,
+                extractedAt INTEGER NOT NULL
+            )
+            """.trimIndent()
+        )
+    }
 }
 
 val MIGRATION_13_14 = object : Migration(13, 14) {

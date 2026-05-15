@@ -249,6 +249,10 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         agentRepo.updateRecentContextEnabled(agentId, enabled)
     }
 
+    fun updateDefaultThinkingEnabled(agentId: String, enabled: Boolean) = viewModelScope.launch {
+        agentRepo.updateDefaultThinkingEnabled(agentId, enabled)
+    }
+
     /**
      * Schedule a one-time DreamWorker to run immediately ("Dream Now" manual trigger).
      * The [isDreaming] state is updated optimistically and reset once the WorkManager

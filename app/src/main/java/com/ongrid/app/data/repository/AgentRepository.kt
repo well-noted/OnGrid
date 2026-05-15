@@ -102,4 +102,8 @@ class AgentRepository(
     suspend fun updateRecentContextEnabled(agentId: String, enabled: Boolean) {
         agentDao.updateRecentContextEnabled(agentId, enabled)
     }
+
+    suspend fun updateDefaultThinkingEnabled(agentId: String, enabled: Boolean) {
+        agentDao.updateDefaultThinkingEnabled(agentId, enabled)
+    }
 }

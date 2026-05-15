@@ -56,6 +56,11 @@
             android:name=".DreamAlarmReceiver"
             android:exported="false" />
 
+        <!-- Fires when a scheduled agent room session is due -->
+        <receiver
+            android:name=".AgentRoomAlarmReceiver"
+            android:exported="false" />
+
         <!-- Fires when the device connects to Wi-Fi (WIFI_CONNECT dream schedules) -->
         <receiver
             android:name=".WifiConnectReceiver"

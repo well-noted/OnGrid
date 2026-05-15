@@ -137,6 +137,7 @@ fun ChatScreen(
     var isCompressing by remember { mutableStateOf(false) }
     var showOverflowMenu by remember { mutableStateOf(false) }
     var showDeleteConfirmDialog by remember { mutableStateOf(false) }
+    var showRoomParticipantsDialog by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     // Hoisted here so both the TopAppBar (agent handoff header) and LazyColumn bubbles can use it
     val activeAgentsForBubbles by viewModel.activeAgents.collectAsState()
@@ -152,70 +153,108 @@ fun ChatScreen(
         topBar = {
             TopAppBar(
                 title = {
-                    if (uiState.isAgentHandoff) {
-                        // Agent handoff: show participant chips instead of model picker
-                        val participantAgents = uiState.handoffParticipantIds.mapNotNull { id ->
-                            activeAgentsForBubbles.firstOrNull { it.id == id }
-                        }
-                        Column(verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(2.dp)) {
-                            Row(
-                                horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(6.dp),
-                                verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
-                            ) {
-                                participantAgents.forEachIndexed { index, agent ->
-                                    if (index > 0) {
-                                        Text("↔", style = MaterialTheme.typography.bodySmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                    }
-                                    val agentColor = if (agent.color != 0)
-                                        androidx.compose.ui.graphics.Color(agent.color)
-                                    else MaterialTheme.colorScheme.primary
-                                    Row(
-                                        verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
-                                        horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(4.dp)
-                                    ) {
-                                        Box(
-                                            modifier = Modifier
-                                                .size(8.dp)
-                                                .clip(CircleShape)
-                                                .background(agentColor)
-                                        )
-                                        Text(
-                                            agent.name,
-                                            style = MaterialTheme.typography.titleSmall,
-                                            color = MaterialTheme.colorScheme.onSurface
-                                        )
-                                    }
-                                }
+                    when {
+                        uiState.isRoomConversation -> {
+                            // Room conversation: show room name, tap to reveal participants
+                            val roomName = uiState.conversationTitle
+                                .substringBefore(": ")
+                                .ifBlank { uiState.conversationTitle }
+                            val participantAgents = uiState.handoffParticipantIds.mapNotNull { id ->
+                                activeAgentsForBubbles.firstOrNull { it.id == id }
                             }
-                            if (uiState.handoffGoal.isNotBlank()) {
+                            Column(
+                                modifier = Modifier.clickable { showRoomParticipantsDialog = true },
+                                verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(1.dp)
+                            ) {
                                 Text(
-                                    uiState.handoffGoal.take(50),
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    roomName,
+                                    style = MaterialTheme.typography.titleMedium,
+                                    color = MaterialTheme.colorScheme.onSurface,
                                     maxLines = 1,
                                     overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                                 )
+                                if (participantAgents.isNotEmpty()) {
+                                    Text(
+                                        buildString {
+                                            participantAgents.take(3).joinTo(this, ", ") { it.name }
+                                            if (participantAgents.size > 3)
+                                                append(" +${participantAgents.size - 3}")
+                                        },
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 1,
+                                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                                    )
+                                }
                             }
                         }
-                    } else {
-                        Column {
-                            TextButton(
-                                onClick = { showModelPicker = true },
-                                contentPadding = PaddingValues(0.dp)
-                            ) {
-                                Text(
-                                    viewModel.currentModel.substringBefore(":") + " ▾",
-                                    style = MaterialTheme.typography.titleMedium,
-                                    color = MaterialTheme.colorScheme.onSurface
-                                )
+                        uiState.isAgentHandoff -> {
+                            // Agent handoff: show participant chips
+                            val participantAgents = uiState.handoffParticipantIds.mapNotNull { id ->
+                                activeAgentsForBubbles.firstOrNull { it.id == id }
                             }
-                            viewModel.currentServer?.let { server ->
-                                Text(
-                                    server.displayName,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
+                            Column(verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(2.dp)) {
+                                Row(
+                                    horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(6.dp),
+                                    verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
+                                ) {
+                                    participantAgents.forEachIndexed { index, agent ->
+                                        if (index > 0) {
+                                            Text("↔", style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        }
+                                        val agentColor = if (agent.color != 0)
+                                            androidx.compose.ui.graphics.Color(agent.color)
+                                        else MaterialTheme.colorScheme.primary
+                                        Row(
+                                            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+                                            horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(4.dp)
+                                        ) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(8.dp)
+                                                    .clip(CircleShape)
+                                                    .background(agentColor)
+                                            )
+                                            Text(
+                                                agent.name,
+                                                style = MaterialTheme.typography.titleSmall,
+                                                color = MaterialTheme.colorScheme.onSurface
+                                            )
+                                        }
+                                    }
+                                }
+                                if (uiState.handoffGoal.isNotBlank()) {
+                                    Text(
+                                        uiState.handoffGoal.take(50),
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 1,
+                                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                                    )
+                                }
+                            }
+                        }
+                        else -> {
+                            // Normal conversation: model picker
+                            Column {
+                                TextButton(
+                                    onClick = { showModelPicker = true },
+                                    contentPadding = PaddingValues(0.dp)
+                                ) {
+                                    Text(
+                                        viewModel.currentModel.substringBefore(":") + " ▾",
+                                        style = MaterialTheme.typography.titleMedium,
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    )
+                                }
+                                viewModel.currentServer?.let { server ->
+                                    Text(
+                                        server.displayName,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
                             }
                         }
                     }
@@ -730,6 +769,68 @@ fun ChatScreen(
                 TextButton(onClick = { showDeleteConfirmDialog = false }) {
                     Text("Cancel")
                 }
+            }
+        )
+    }
+
+    // ── Room participants dialog ───────────────────────────────────────────────
+    if (showRoomParticipantsDialog) {
+        val participantAgents = uiState.handoffParticipantIds.mapNotNull { id ->
+            activeAgentsForBubbles.firstOrNull { it.id == id }
+        }
+        val roomName = uiState.conversationTitle
+            .substringBefore(": ")
+            .ifBlank { uiState.conversationTitle }
+        AlertDialog(
+            onDismissRequest = { showRoomParticipantsDialog = false },
+            title = { Text(roomName) },
+            text = {
+                Column(verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(10.dp)) {
+                    if (uiState.handoffGoal.isNotBlank()) {
+                        Text(
+                            uiState.handoffGoal,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        HorizontalDivider()
+                    }
+                    participantAgents.forEach { agent ->
+                        val agentColor = if (agent.color != 0)
+                            androidx.compose.ui.graphics.Color(agent.color)
+                        else MaterialTheme.colorScheme.primary
+                        Row(
+                            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+                            horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(10.dp)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(32.dp)
+                                    .clip(CircleShape)
+                                    .background(agentColor.copy(alpha = 0.15f)),
+                                contentAlignment = androidx.compose.ui.Alignment.Center
+                            ) {
+                                Text(
+                                    agent.name.first().uppercase(),
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = agentColor
+                                )
+                            }
+                            Column {
+                                Text(agent.name, style = MaterialTheme.typography.bodyMedium)
+                                if (agent.role.isNotBlank()) {
+                                    Text(
+                                        agent.role,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showRoomParticipantsDialog = false }) { Text("Done") }
             }
         )
     }

@@ -105,7 +105,11 @@ data class ChatUiState(
     /** Participant agent IDs for the handoff conversation (agent1, agent2). */
     val handoffParticipantIds: List<String> = emptyList(),
     /** Goal text for the handoff conversation (shown in the header). */
-    val handoffGoal: String = ""
+    val handoffGoal: String = "",
+    /** True when the current conversation was spawned by an Agent Room. */
+    val isRoomConversation: Boolean = false,
+    /** Full title of the conversation (used in the room top-bar). */
+    val conversationTitle: String = ""
 ) {
     /** True when extended reasoning is enabled for this conversation. */
     val isThinkingOn: Boolean
@@ -248,17 +252,19 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             if (!alreadyActiveAndLoading) {
                 _messages.value = repo.getMessages(conversationId)
             }
-            // For AGENT_HANDOFF conversations, keep _messages live so worker output appears.
+            // For AGENT_HANDOFF and AGENT_ROOM conversations, keep _messages live so worker output appears.
             handoffObserverJob?.cancel()
-            val isHandoff = entity.conversationType == "AGENT_HANDOFF"
+            val isRoom = entity.conversationType == "AGENT_ROOM"
+            val isHandoff = entity.conversationType == "AGENT_HANDOFF" || isRoom
             if (isHandoff) {
                 // Only clean up stale TYPING rows when the worker is NOT currently running.
                 // If the worker is active, the TYPING row belongs to it — don't touch it.
                 // If the worker has stopped (crash, cancel, completion), promote any partial
                 // content to ASSISTANT so it's preserved, and delete empty rows.
                 val workManager = androidx.work.WorkManager.getInstance(getApplication<Application>())
+                val workerTag = if (isRoom) "room_convo_$conversationId" else "agent_convo_$conversationId"
                 val workerRunning = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                    workManager.getWorkInfosByTag("agent_convo_$conversationId")
+                    workManager.getWorkInfosByTag(workerTag)
                         .get()
                         .any {
                             it.state == androidx.work.WorkInfo.State.RUNNING ||
@@ -270,8 +276,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     app.database.messageDao().deleteEmptyTyping(conversationId)
                 }
                 handoffObserverJob = viewModelScope.launch {
-                    // AGENT_HANDOFF conversations are driven entirely by the background worker;
-                    // there is no streaming bubble to protect, so always apply DB updates.
+                    // Worker-driven conversations have no streaming bubble to protect,
+                    // so always apply DB updates directly.
                     repo.observeMessages(conversationId).collect { msgs ->
                         _messages.value = msgs
                     }
@@ -291,6 +297,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 lastTurnUsedThinking = hadThinking,
                 currentProjectId = entity.projectId,
                 isAgentHandoff = isHandoff,
+                isRoomConversation = isRoom,
+                conversationTitle = entity.title,
                 handoffParticipantIds = participantIds,
                 handoffGoal = if (isHandoff) entity.goal else "",
                 // Clear stale agent identity so it can't leak into the @mention picker
@@ -1196,6 +1204,11 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         // Apply agent's default disabled tools
         val disabledTools = agentRepo.parseDisabledTools(agent.defaultDisabledToolNames).toSet()
         _uiState.value = _uiState.value.copy(disabledToolNames = disabledTools)
+
+        // Apply agent's default thinking preference (only if model actually supports thinking)
+        if (_uiState.value.supportsThinking) {
+            _uiState.value = _uiState.value.copy(thinkingEnabled = agent.defaultThinkingEnabled)
+        }
 
         // Ensure form_memory and use_skill are included now that an agent is active.
         refreshToolsList()

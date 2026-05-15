@@ -33,5 +33,7 @@ data class AgentEntity(
     // Phase 3 — Semantic memory recall
     val isSemanticRecallEnabled: Boolean = false,
     // Phase 4 — Recent conversation context
-    val isRecentContextEnabled: Boolean = false
+    val isRecentContextEnabled: Boolean = false,
+    // Conversation defaults
+    val defaultThinkingEnabled: Boolean = false
 )

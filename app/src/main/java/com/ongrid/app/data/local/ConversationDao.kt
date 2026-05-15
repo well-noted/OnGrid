@@ -58,4 +58,7 @@ interface ConversationDao {
 
     @Query("SELECT * FROM conversations WHERE ((agentId IS NULL OR agentId = '') AND (projectId IS NULL OR projectId = '') AND conversationType != 'AGENT_HANDOFF') OR conversationType = 'AGENT_HANDOFF' ORDER BY updatedAt DESC")
     fun standaloneAndHandoffConversations(): Flow<List<ConversationEntity>>
+
+    @Query("SELECT * FROM conversations WHERE roomId = :roomId ORDER BY updatedAt DESC")
+    fun getByRoom(roomId: String): Flow<List<ConversationEntity>>
 }

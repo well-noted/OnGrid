@@ -25,6 +25,8 @@ import com.ongrid.app.data.local.MIGRATION_10_11
 import com.ongrid.app.data.local.MIGRATION_11_12
 import com.ongrid.app.data.local.MIGRATION_12_13
 import com.ongrid.app.data.local.MIGRATION_13_14
+import com.ongrid.app.data.local.MIGRATION_14_15
+import com.ongrid.app.data.local.MIGRATION_15_16
 import com.ongrid.app.data.local.MIGRATION_9_10
 import com.ongrid.app.data.repository.AgentConversationRepository
 import com.ongrid.app.data.repository.AgentRepository
@@ -37,6 +39,7 @@ import com.ongrid.app.data.repository.ServerRepository
 import com.ongrid.app.data.repository.SettingsRepository
 import com.ongrid.app.data.repository.SkillActivationRepository
 import com.ongrid.app.data.repository.SkillRepository
+import com.ongrid.app.data.repository.AgentRoomRepository
 import com.ongrid.app.data.repository.DreamScheduleRepository
 import com.ongrid.app.data.repository.UtilityAgentRepository
 import com.ongrid.app.data.repository.WebFetchRepository
@@ -124,6 +127,7 @@ class OnGridApplication : Application() {
 
         // Restore TIME_OF_DAY alarms after reboot / fresh install
         dreamScheduleManager.syncAll()
+        agentRoomScheduleManager.syncAll()
 
         registerActivityLifecycleCallbacks(object : ActivityLifecycleCallbacks {
             override fun onActivityStarted(a: Activity) { startedActivityCount++ }
@@ -158,7 +162,7 @@ class OnGridApplication : Application() {
 
     val database: AppDatabase by lazy {
         Room.databaseBuilder(this, AppDatabase::class.java, "ongrid.db")
-            .addMigrations(MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14)
+            .addMigrations(MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16)
             .fallbackToDestructiveMigration()
             .build()
     }
@@ -178,6 +182,10 @@ class OnGridApplication : Application() {
     }
     val dreamScheduleManager: DreamScheduleManager by lazy { DreamScheduleManager(this) }
     val agentShortcutManager: AgentShortcutManager by lazy { AgentShortcutManager(this) }
+    val agentRoomRepository: AgentRoomRepository by lazy {
+        AgentRoomRepository(database.agentRoomDao(), database.roomMemoryDao())
+    }
+    val agentRoomScheduleManager: AgentRoomScheduleManager by lazy { AgentRoomScheduleManager(this) }
 
     /** Set by [ChatViewModel] before starting [ChatForegroundService]; consumed by the service. */
     @Volatile var pendingChatRequest: PendingChatRequest? = null

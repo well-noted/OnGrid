@@ -8,11 +8,11 @@ import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface MessageDao {
-    @Query("SELECT * FROM messages WHERE conversationId = :conversationId ORDER BY timestamp ASC")
+    @Query("SELECT * FROM messages WHERE conversationId = :conversationId ORDER BY CASE WHEN role = 'TYPING' THEN 1 ELSE 0 END ASC, timestamp ASC")
     suspend fun getByConversation(conversationId: String): List<MessageEntity>
 
     /** Live-updating version — use this to observe messages in AGENT_HANDOFF conversations. */
-    @Query("SELECT * FROM messages WHERE conversationId = :conversationId ORDER BY timestamp ASC")
+    @Query("SELECT * FROM messages WHERE conversationId = :conversationId ORDER BY CASE WHEN role = 'TYPING' THEN 1 ELSE 0 END ASC, timestamp ASC")
     fun observeByConversation(conversationId: String): Flow<List<MessageEntity>>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
@@ -27,6 +27,10 @@ interface MessageDao {
     /** Update only the content of an existing row — used to stream tokens into the TYPING placeholder. */
     @Query("UPDATE messages SET content = :content WHERE id = :id")
     suspend fun updateContent(id: String, content: String)
+
+    /** Update only the thinkingContent of an existing row — streams reasoning tokens into the TYPING placeholder. */
+    @Query("UPDATE messages SET thinkingContent = :thinking WHERE id = :id")
+    suspend fun updateThinkingContent(id: String, thinking: String)
 
     /**
      * Promote stale TYPING rows that have content into real ASSISTANT messages so the

@@ -533,12 +533,13 @@ fun AgentScreen(
             agent = currentAgent,
             isDreaming = isDreaming,
             onDismiss = { showCognitionSheet = false },
-            onSave = { isDreamingEnabled, isMood, isAutoBrief, maxTokens, isSemanticRecall, isRecentContext ->
+            onSave = { isDreamingEnabled, isMood, isAutoBrief, maxTokens, isSemanticRecall, isRecentContext, defaultThinking ->
                 viewModel.saveCognitionSettings(
                     currentAgent.id, isDreamingEnabled, isMood, isAutoBrief, maxTokens
                 )
                 viewModel.updateSemanticRecallEnabled(currentAgent.id, isSemanticRecall)
                 viewModel.updateRecentContextEnabled(currentAgent.id, isRecentContext)
+                viewModel.updateDefaultThinkingEnabled(currentAgent.id, defaultThinking)
                 showCognitionSheet = false
             },
             onResetVibe = { viewModel.resetMood(currentAgent.id) },
@@ -2150,7 +2151,7 @@ private fun CognitionSettingsSheet(
     agent: AgentEntity,
     isDreaming: Boolean,
     onDismiss: () -> Unit,
-    onSave: (isDreamingEnabled: Boolean, isMoodTrackingEnabled: Boolean, isAutoBriefEnabled: Boolean, maxContextTokens: Int, isSemanticRecallEnabled: Boolean, isRecentContextEnabled: Boolean) -> Unit,
+    onSave: (isDreamingEnabled: Boolean, isMoodTrackingEnabled: Boolean, isAutoBriefEnabled: Boolean, maxContextTokens: Int, isSemanticRecallEnabled: Boolean, isRecentContextEnabled: Boolean, defaultThinkingEnabled: Boolean) -> Unit,
     onResetVibe: () -> Unit,
     onDreamNow: () -> Unit
 ) {
@@ -2159,6 +2160,7 @@ private fun CognitionSettingsSheet(
     var autoBriefEnabled by remember { mutableStateOf(agent.isAutoBriefEnabled) }
     var semanticRecallEnabled by remember { mutableStateOf(agent.isSemanticRecallEnabled) }
     var recentContextEnabled by remember { mutableStateOf(agent.isRecentContextEnabled) }
+    var defaultThinkingEnabled by remember { mutableStateOf(agent.defaultThinkingEnabled) }
     // Slider: 256 to 8192 in steps of 256 → store as float, display as Int
     var tokenBudget by remember {
         mutableFloatStateOf(
@@ -2283,6 +2285,25 @@ private fun CognitionSettingsSheet(
                 Switch(checked = recentContextEnabled, onCheckedChange = { recentContextEnabled = it })
             }
 
+            Spacer(Modifier.height(12.dp))
+
+            // Thinking toggle
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Thinking by default", style = MaterialTheme.typography.bodyMedium)
+                    Text(
+                        "Enable extended reasoning when starting a conversation with this agent (only applies to models that support thinking)",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Switch(checked = defaultThinkingEnabled, onCheckedChange = { defaultThinkingEnabled = it })
+            }
+
             Spacer(Modifier.height(16.dp))
             HorizontalDivider()
             Spacer(Modifier.height(16.dp))
@@ -2341,7 +2362,7 @@ private fun CognitionSettingsSheet(
 
             // Save
             Button(
-                onClick = { onSave(dreamingEnabled, moodEnabled, autoBriefEnabled, tokenBudgetInt, semanticRecallEnabled, recentContextEnabled) },
+                onClick = { onSave(dreamingEnabled, moodEnabled, autoBriefEnabled, tokenBudgetInt, semanticRecallEnabled, recentContextEnabled, defaultThinkingEnabled) },
                 modifier = Modifier.fillMaxWidth()
             ) { Text("Save Settings") }
         }
