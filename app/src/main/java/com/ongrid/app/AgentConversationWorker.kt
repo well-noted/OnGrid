@@ -132,11 +132,11 @@ class AgentConversationWorker(
                 when {
                     // TYPING rows are live placeholders — never part of history
                     msg.role == "TYPING" -> continue
-                    // TOOL rows are display-only artifacts. The real tool call/result exchange
-                    // happened inside the worker's in-memory currentHistory and produced the
-                    // final ASSISTANT response that was persisted. Including TOOL rows here
-                    // would cause the agent to see their own tool result as a prior response.
-                    msg.role == "TOOL" -> continue
+                    // TOOL / TOOL_ERROR rows are display-only artifacts. The real tool call/result
+                    // exchange happened inside the worker's in-memory currentHistory and produced
+                    // the final ASSISTANT response that was persisted. Including them here would
+                    // cause the agent to see their own tool result as a prior response.
+                    msg.role == "TOOL" || msg.role == "TOOL_ERROR" -> continue
                     msg.role == "USER" || msg.role == "user" ->
                         baseHistory += OllamaChatMessage(
                             role = "user",
@@ -254,12 +254,13 @@ class AgentConversationWorker(
                     Log.d(TAG, "Tool ${toolCall.function.name} result: ${result.take(80)}")
                     currentHistory += OllamaChatMessage(role = "tool", content = result)
 
-                    // Persist the tool result so it appears as a bubble in the chat
+                    // Persist the tool result so it appears as a bubble in the chat.
+                    // Use "TOOL_ERROR" role for failures so the bubble renders red.
                     app.database.messageDao().insert(
                         MessageEntity(
                             id = UUID.randomUUID().toString(),
                             conversationId = conversationId,
-                            role = "TOOL",
+                            role = if (isError) "TOOL_ERROR" else "TOOL",
                             content = result,
                             timestamp = System.currentTimeMillis(),
                             senderAgentId = currentSpeakerId,
