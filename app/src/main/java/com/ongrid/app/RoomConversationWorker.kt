@@ -390,7 +390,13 @@ class RoomConversationWorker(
                         conversationId = conversationId
                     )
                     Log.d(TAG, "Tool ${toolCall.function.name}: ${result.take(80)}")
-                    currentHistory += OllamaChatMessage(role = "tool", content = result)
+                    // Use the same "user" role + explicit label that history reconstruction uses
+                    // when rebuilding past turns from the DB. This keeps the format consistent
+                    // across turns and avoids models that don't handle role="tool" cleanly.
+                    currentHistory += OllamaChatMessage(
+                        role = "user",
+                        content = "[tool:${toolCall.function.name} result]: $result"
+                    )
                     app.database.messageDao().insert(
                         MessageEntity(
                             id = UUID.randomUUID().toString(),

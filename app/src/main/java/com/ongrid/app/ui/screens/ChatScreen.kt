@@ -1290,6 +1290,16 @@ private fun MessageBubble(
         ),
         label = "cursorAlpha"
     )
+    // Slow pulse for the "Orchestrating…" indicator — distinct from the fast cursor blink
+    val orchestratingAlpha by infiniteTransition.animateFloat(
+        initialValue = 0.65f,
+        targetValue = 0.2f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 1400),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "orchestratingAlpha"
+    )
 
     // Agent attribution label for multi-agent conversations (shown during typing too)
     if (showAgentLabel && agentName != null) {
@@ -1318,7 +1328,7 @@ private fun MessageBubble(
             Text(
                 text = "Orchestrating…",
                 style = MaterialTheme.typography.bodySmall.copy(fontStyle = FontStyle.Italic),
-                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = orchestratingAlpha)
             )
         }
         return

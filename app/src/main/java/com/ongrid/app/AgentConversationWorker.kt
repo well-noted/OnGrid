@@ -284,7 +284,12 @@ class AgentConversationWorker(
                         conversationId = conversationId
                     )
                     Log.d(TAG, "Tool ${toolCall.function.name} result: ${result.take(80)}")
-                    currentHistory += OllamaChatMessage(role = "tool", content = result)
+                    // Use the same "user" role + explicit label that history reconstruction uses.
+                    // Avoids role="tool" handling issues with models that expect tool_call_id.
+                    currentHistory += OllamaChatMessage(
+                        role = "user",
+                        content = "[tool:${toolCall.function.name} result]: $result"
+                    )
 
                     // Persist the tool result so it appears as a bubble in the chat.
                     // Use "TOOL_ERROR" role for failures so the bubble renders red.
