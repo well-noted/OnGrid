@@ -332,10 +332,38 @@ class RoomConversationWorker(
 
                 // Execute tool calls
                 Log.d(TAG, "Turn $turnCount depth $toolDepth: ${toolCalls.size} tool(s)")
+
+                // ── Pre-tool reasoning snapshot ───────────────────────────────
+                // If the agent produced thinking content (and/or partial text) before deciding
+                // to call a tool, persist it NOW as a settled ASSISTANT row so it appears
+                // BEFORE the tool messages in the timeline. Without this, the TYPING bubble
+                // (which holds the thinking) is sorted last by the SQL ordering rule, making
+                // it appear after the tool call rows — backwards from the actual sequence.
+                val preToolThinking = accumulatedThinking.toString().trim()
+                val preToolContent  = accumulated.toString().trim()
+                if (preToolThinking.isNotEmpty() || preToolContent.isNotEmpty()) {
+                    app.database.messageDao().insert(
+                        MessageEntity(
+                            id = java.util.UUID.randomUUID().toString(),
+                            conversationId = conversationId,
+                            role = "ASSISTANT",
+                            content = preToolContent,
+                            thinkingContent = preToolThinking,
+                            timestamp = System.currentTimeMillis(),
+                            senderAgentId = currentSpeaker.id
+                        )
+                    )
+                    // Reset accumulated thinking so the next round starts fresh
+                    accumulatedThinking = StringBuilder()
+                }
+                // Clear the TYPING bubble content and thinking so the next streamed
+                // round doesn't mix old reasoning with new.
                 app.database.messageDao().updateContent(typingId, "")
+                app.database.messageDao().updateThinkingContent(typingId, "")
+
                 currentHistory += OllamaChatMessage(
                     role = "assistant",
-                    content = accumulated.toString().ifEmpty { null },
+                    content = preToolContent.ifEmpty { null },
                     tool_calls = toolCalls
                 )
                 for (toolCall in toolCalls) {

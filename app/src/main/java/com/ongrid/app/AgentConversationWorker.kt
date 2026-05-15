@@ -244,13 +244,36 @@ class AgentConversationWorker(
                 }
 
                 // Has tool calls → execute them, persist results to DB, and loop back.
-                // Clear the TYPING row first so any partial text accumulated before the tool-call
-                // decision doesn't appear as a truncated streaming bubble alongside the tool results.
                 Log.d(TAG, "Turn $turnCount depth $toolDepth: executing ${toolCalls.size} tool(s)")
+
+                // ── Pre-tool reasoning snapshot ───────────────────────────────
+                // Flush any thinking (and partial text) produced BEFORE the tool decision
+                // as a settled ASSISTANT row so it sorts BEFORE the tool messages in the
+                // timeline. Without this the TYPING bubble (which holds thinking) is always
+                // sorted last, making reasoning appear after the tool call — backwards.
+                val preToolThinking = accumulatedThinking.toString().trim()
+                val preToolContent  = accumulated.toString().trim()
+                if (preToolThinking.isNotEmpty() || preToolContent.isNotEmpty()) {
+                    app.database.messageDao().insert(
+                        MessageEntity(
+                            id = UUID.randomUUID().toString(),
+                            conversationId = conversationId,
+                            role = "ASSISTANT",
+                            content = preToolContent,
+                            thinkingContent = preToolThinking,
+                            timestamp = System.currentTimeMillis(),
+                            senderAgentId = currentSpeakerId
+                        )
+                    )
+                    accumulatedThinking = StringBuilder()
+                }
+                // Clear the TYPING bubble so the next streamed round starts clean.
                 app.database.messageDao().updateContent(typingId, "")
+                app.database.messageDao().updateThinkingContent(typingId, "")
+
                 currentHistory += OllamaChatMessage(
                     role = "assistant",
-                    content = accumulated.toString().ifEmpty { null },
+                    content = preToolContent.ifEmpty { null },
                     tool_calls = toolCalls
                 )
                 for (toolCall in toolCalls) {
