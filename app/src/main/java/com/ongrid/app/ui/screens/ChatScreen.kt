@@ -486,6 +486,9 @@ fun ChatScreen(
                         showAgentLabel = message.senderAgentId != null && uiState.currentAgent == null,
                         onPinToAgent = if (uiState.currentAgentId != null) { id, content ->
                             viewModel.pinMessageToAgentMemory(id, content)
+                        } else null,
+                        onRetry = if (uiState.isAgentHandoff && message.role == MessageRole.SYSTEM) {
+                            { viewModel.retryHandoff() }
                         } else null
                     )
                 }
@@ -1090,7 +1093,9 @@ private fun MessageBubble(
     assistantBubbleColor: Color? = null,
     /** When true, show the agent name above the bubble (for multi-agent conversations). */
     showAgentLabel: Boolean = false,
-    onPinToAgent: ((messageId: String, content: String) -> Unit)? = null
+    onPinToAgent: ((messageId: String, content: String) -> Unit)? = null,
+    /** Called when the user taps a SYSTEM error banner to retry the failed turn. */
+    onRetry: (() -> Unit)? = null
 ) {
     val isUser = message.role == MessageRole.USER
     val isTool = message.role == MessageRole.TOOL
@@ -1103,17 +1108,33 @@ private fun MessageBubble(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.Center
         ) {
-            Surface(
-                shape = RoundedCornerShape(8.dp),
-                color = MaterialTheme.colorScheme.errorContainer,
-                modifier = Modifier.padding(vertical = 4.dp)
-            ) {
-                Text(
-                    text = message.content,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onErrorContainer,
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
-                )
+            if (onRetry != null) {
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = MaterialTheme.colorScheme.errorContainer,
+                    modifier = Modifier.padding(vertical = 4.dp),
+                    onClick = onRetry
+                ) {
+                    Text(
+                        text = message.content,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onErrorContainer,
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                    )
+                }
+            } else {
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = MaterialTheme.colorScheme.errorContainer,
+                    modifier = Modifier.padding(vertical = 4.dp)
+                ) {
+                    Text(
+                        text = message.content,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onErrorContainer,
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                    )
+                }
             }
         }
         return

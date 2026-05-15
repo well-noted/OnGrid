@@ -445,9 +445,10 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 val nextSpeakerId = if (mentionedAgent != null) {
                     mentionedAgent.id
                 } else {
-                    // Default: whoever did NOT last speak
+                    // Only count completed ASSISTANT turns — TOOL messages are mid-turn
+                    // display artifacts and must not influence speaker selection.
                     val lastAgentMsg = _messages.value
-                        .lastOrNull { it.senderAgentId != null && it.role != MessageRole.TYPING }
+                        .lastOrNull { it.senderAgentId != null && it.role == MessageRole.ASSISTANT }
                     when (lastAgentMsg?.senderAgentId) {
                         agent1Id -> agent2Id
                         agent2Id -> agent1Id
@@ -888,6 +889,46 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
      * Cancel a running AGENT_HANDOFF worker for the current conversation.
      * Safe to call even if no worker is running — WorkManager ignores the cancel if already done.
      */
+    /**
+     * Re-enqueue the agent worker after a failed turn, without injecting a user message.
+     * Determines the next speaker the same way sendMessage() does.
+     */
+    fun retryHandoff() {
+        val convId = currentConversationId ?: return
+        val participantIds = _uiState.value.handoffParticipantIds
+        if (participantIds.size < 2) return
+        val agent1Id = participantIds[0]
+        val agent2Id = participantIds[1]
+        viewModelScope.launch {
+            // Only look at completed ASSISTANT turns — TOOL messages are mid-turn display
+            // artifacts and must not be counted as a completed response when deciding who speaks next.
+            val lastAgentMsg = _messages.value.lastOrNull {
+                it.senderAgentId != null && it.role == MessageRole.ASSISTANT
+            }
+            val nextSpeakerId = when (lastAgentMsg?.senderAgentId) {
+                agent1Id -> agent2Id
+                agent2Id -> agent1Id
+                else -> agent2Id
+            }
+            val workManager = androidx.work.WorkManager.getInstance(getApplication<Application>())
+            val alreadyRunning = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                workManager.getWorkInfosByTag("agent_convo_$convId").get().any {
+                    it.state == androidx.work.WorkInfo.State.RUNNING ||
+                    it.state == androidx.work.WorkInfo.State.ENQUEUED
+                }
+            }
+            if (!alreadyRunning) {
+                AgentConversationWorker.enqueue(
+                    getApplication<Application>(),
+                    conversationId = convId,
+                    agent1Id = agent1Id,
+                    agent2Id = agent2Id,
+                    startAgentId = nextSpeakerId
+                )
+            }
+        }
+    }
+
     fun cancelHandoffConversation() {
         val convId = currentConversationId ?: return
         androidx.work.WorkManager.getInstance(getApplication())

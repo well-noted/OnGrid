@@ -129,8 +129,14 @@ class AgentConversationWorker(
             val baseHistory = mutableListOf<OllamaChatMessage>()
             baseHistory += OllamaChatMessage(role = "system", content = systemContent)
             for (msg in messages) {
-                if (msg.role == "TYPING") continue
                 when {
+                    // TYPING rows are live placeholders — never part of history
+                    msg.role == "TYPING" -> continue
+                    // TOOL rows are display-only artifacts. The real tool call/result exchange
+                    // happened inside the worker's in-memory currentHistory and produced the
+                    // final ASSISTANT response that was persisted. Including TOOL rows here
+                    // would cause the agent to see their own tool result as a prior response.
+                    msg.role == "TOOL" -> continue
                     msg.role == "USER" || msg.role == "user" ->
                         baseHistory += OllamaChatMessage(
                             role = "user",
@@ -228,8 +234,11 @@ class AgentConversationWorker(
                     break
                 }
 
-                // Has tool calls → execute them, persist results to DB, and loop back
+                // Has tool calls → execute them, persist results to DB, and loop back.
+                // Clear the TYPING row first so any partial text accumulated before the tool-call
+                // decision doesn't appear as a truncated streaming bubble alongside the tool results.
                 Log.d(TAG, "Turn $turnCount depth $toolDepth: executing ${toolCalls.size} tool(s)")
+                app.database.messageDao().updateContent(typingId, "")
                 currentHistory += OllamaChatMessage(
                     role = "assistant",
                     content = accumulated.toString().ifEmpty { null },
@@ -272,7 +281,7 @@ class AgentConversationWorker(
                         id = UUID.randomUUID().toString(),
                         conversationId = conversationId,
                         role = "SYSTEM",
-                        content = "⚠ ${currentSpeaker.name} could not respond after $MAX_RETRIES_PER_TURN attempts. Tap send to resume.",
+                        content = "⚠ ${currentSpeaker.name} could not respond after $MAX_RETRIES_PER_TURN attempts. Tap to retry.",
                         timestamp = System.currentTimeMillis(),
                         senderAgentId = null
                     )
