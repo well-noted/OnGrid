@@ -113,6 +113,7 @@ class RoomConversationWorker(
         var turnCount = 0
         var goalReached = false
         var speakerIndex = 0
+        var lastSpeakerId: String? = null   // prevents back-to-back orchestrator picks
 
         while (turnCount < MAX_TURNS && !goalReached) {
             // Fetch messages once per turn — reused for history, orchestrator, and starvation guard
@@ -158,7 +159,20 @@ class RoomConversationWorker(
                 if (starved != null) {
                     Log.d(TAG, "Starvation guard: forcing ${starved.name} (turns=${turnCountsMap[starved.id]}, avg=${"%.1f".format(avgTurns)})")
                 }
-                starved ?: chosen ?: agents[speakerIndex % agents.size]
+                val resolved = starved ?: chosen ?: agents[speakerIndex % agents.size]
+                // Prevent the orchestrator from picking the same agent twice in a row.
+                // If the resolved pick matches the last speaker, substitute the agent
+                // with the fewest turns who isn't the last speaker.
+                if (resolved.id == lastSpeakerId && agents.size > 1) {
+                    val alternative = agents
+                        .filter { it.id != lastSpeakerId }
+                        .minByOrNull { turnCountsMap[it.id] ?: 0 }
+                        ?: resolved
+                    Log.d(TAG, "Consecutive-repeat guard: swapping ${resolved.name} → ${alternative.name}")
+                    alternative
+                } else {
+                    resolved
+                }
             } else {
                 agents[speakerIndex % agents.size]
             }
@@ -479,6 +493,7 @@ class RoomConversationWorker(
             if (displayText == null) {
                 // Skip inserting an invisible empty bubble; advance to next turn
                 accumulatedThinking = StringBuilder()
+                lastSpeakerId = currentSpeaker.id
                 speakerIndex = (speakerIndex + 1) % agents.size
                 turnCount++
                 continue
@@ -525,6 +540,8 @@ class RoomConversationWorker(
 
             if (goalReached) break
 
+            // Record who just spoke so the next orchestrator pick can avoid a repeat
+            lastSpeakerId = currentSpeaker.id
             // Advance round-robin index regardless of orchestrator (used as fallback)
             speakerIndex = (speakerIndex + 1) % agents.size
             turnCount++
